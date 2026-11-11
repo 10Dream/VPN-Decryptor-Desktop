@@ -1,11 +1,11 @@
-use aes::cipher::{BlockDecrypt, KeyInit, KeyIvInit, StreamCipher};
+use aes::cipher::{AsyncStreamCipher, BlockDecrypt, BlockDecryptMut, KeyInit, KeyIvInit};
 use aes_gcm::{aead::Aead as AeadGcm, aead::Payload, Aes256Gcm, Key as GcmKey, Nonce as GcmNonce};
 use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
 use cbc::Decryptor as CbcDecryptor;
 use cfb_mode::Decryptor as CfbDecryptor;
-use chacha20::cipher::{KeyIvInit as ChaChaKeyIvInit, StreamCipher as ChaChaStreamCipher, StreamCipherSeek};
-use chacha20::{ChaCha20Legacy};
+use chacha20::cipher::{StreamCipher, StreamCipherSeek};
+use chacha20::ChaCha20Legacy;
 use chacha20poly1305::{ChaCha20Poly1305, Key as PolyKey, Nonce as PolyNonce};
 use ecb::Decryptor as EcbDecryptor;
 use flate2::read::ZlibDecoder;
@@ -92,21 +92,21 @@ pub fn decrypt_aes_ecb(ciphertext: &[u8], key: &[u8], unpad: bool) -> Result<Vec
     let mut buf = ciphertext.to_vec();
     match key.len() {
         16 => {
-            let cipher = EcbDecryptor::<Aes128>::new_from_slice(key)
+            let mut cipher = EcbDecryptor::<Aes128>::new_from_slice(key)
                 .map_err(|e| format!("AES-128 key error: {}", e))?;
             for chunk in buf.chunks_exact_mut(16) {
                 cipher.decrypt_block_mut(chunk.into());
             }
         }
         24 => {
-            let cipher = EcbDecryptor::<Aes192>::new_from_slice(key)
+            let mut cipher = EcbDecryptor::<Aes192>::new_from_slice(key)
                 .map_err(|e| format!("AES-192 key error: {}", e))?;
             for chunk in buf.chunks_exact_mut(16) {
                 cipher.decrypt_block_mut(chunk.into());
             }
         }
         32 => {
-            let cipher = EcbDecryptor::<Aes256>::new_from_slice(key)
+            let mut cipher = EcbDecryptor::<Aes256>::new_from_slice(key)
                 .map_err(|e| format!("AES-256 key error: {}", e))?;
             for chunk in buf.chunks_exact_mut(16) {
                 cipher.decrypt_block_mut(chunk.into());
@@ -128,12 +128,10 @@ pub fn decrypt_aes_cbc_nopad(ciphertext: &[u8], key: &[u8], iv: &[u8]) -> Result
     let mut buf = ciphertext.to_vec();
     match key.len() {
         16 => {
-            let dec = CbcDecryptor::<Aes128>::new_from_slices(key, iv)
+            let _dec = CbcDecryptor::<Aes128>::new_from_slices(key, iv)
                 .map_err(|e| format!("AES-128-CBC init error: {}", e))?;
-            use aes::cipher::BlockDecryptMut;
             let mut prev = [0u8; 16];
             prev.copy_from_slice(iv);
-            let _ = dec; // Use block-by-block CBC cleanly with Aes128
             let cipher = Aes128::new_from_slice(key).unwrap();
             for chunk in buf.chunks_exact_mut(16) {
                 let mut saved = [0u8; 16];

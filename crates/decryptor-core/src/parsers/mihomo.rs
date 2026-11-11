@@ -519,8 +519,10 @@ pub async fn parse_mihomo_yaml_async(
         if let Ok(sub_txt) = fetch_text_with_fallback(&p_url, proxy_mode, custom_proxy_url, 6).await {
             if let Ok((sub_profiles, _)) = parse_mihomo_yaml(&sub_txt) {
                 profiles.extend(sub_profiles);
-            } else if let Ok(parsed) =
-                crate::parsers::subscription::parse_subscription_text(&sub_txt, proxy_mode, custom_proxy_url).await
+            } else if let Ok(parsed) = Box::pin(
+                crate::parsers::subscription::parse_subscription_text(&sub_txt, proxy_mode, custom_proxy_url),
+            )
+            .await
             {
                 profiles.extend(parsed.profiles);
             }

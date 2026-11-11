@@ -248,7 +248,8 @@ pub fn decrypt_ehi(raw_buffer: &[u8]) -> Result<EhiDecoded, DecryptionError> {
         let salt = parsed_map
             .get("configSalt")
             .and_then(|v| v.as_str())
-            .unwrap_or("EVZJNI");
+            .unwrap_or("EVZJNI")
+            .to_string();
         let mut cleaned = Map::new();
         for (k, v) in parsed_map {
             if k == "configMessage" {
@@ -258,7 +259,7 @@ pub fn decrypt_ehi(raw_buffer: &[u8]) -> Result<EhiDecoded, DecryptionError> {
                     cleaned.insert(k, v);
                 }
             } else if let Some(st) = v.as_str() {
-                cleaned.insert(k, Value::String(decrypt_ehi_xor_field(st, salt)));
+                cleaned.insert(k, Value::String(decrypt_ehi_xor_field(st, &salt)));
             } else {
                 cleaned.insert(k, v);
             }

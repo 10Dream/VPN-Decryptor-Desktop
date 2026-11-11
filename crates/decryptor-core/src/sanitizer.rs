@@ -1115,7 +1115,7 @@ pub fn filter_and_deduplicate_with_stats(
 
     for p in proxies {
         let final_opt = validate_and_sanitize_proxy(p);
-        let mut final_proxy = match final_opt {
+        let final_proxy = match final_opt {
             Some(vp) => vp,
             None => {
                 if filter_broken {
