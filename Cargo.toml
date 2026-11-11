@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/decryptor-core",
+    "crates/decryptor-cli",
+    "src-tauri",
+]
+
+[profile.dev]
+opt-level = 0
+debug = 0
+
+[profile.release]
+lto = "thin"
+codegen-units = 2
+opt-level = 3
+strip = true
