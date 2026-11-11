@@ -31,6 +31,15 @@ pub fn base64_decode_safe(input: &str) -> Result<Vec<u8>, String> {
     }
     STANDARD
         .decode(cleaned.as_bytes())
+        .or_else(|_| {
+            let lenient = base64::engine::GeneralPurpose::new(
+                &base64::alphabet::STANDARD,
+                base64::engine::GeneralPurposeConfig::new()
+                    .with_decode_allow_trailing_bits(true)
+                    .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
+            );
+            lenient.decode(cleaned.as_bytes())
+        })
         .map_err(|e| format!("Invalid Base64: {}", e))
 }
 
