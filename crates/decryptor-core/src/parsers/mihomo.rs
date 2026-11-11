@@ -340,6 +340,11 @@ pub fn clash_object_to_profile(p: &Map<String, Value>) -> ProxyProfile {
         congestion_control: p.get("congestion-controller").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
         udp_relay_mode: p.get("udp-relay-mode").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
         private_key: s_val(p.get("private-key").or_else(|| p.get("privateKey"))),
+        peer_public_key: s_val(
+            p.get("peer-public-key")
+                .or_else(|| p.get("public-key"))
+                .or_else(|| p.get("publicKey")),
+        ),
         local_address: s_val(p.get("ip")),
         ipv6: p.get("ipv6").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
         mtu: p.get("mtu").and_then(|v| v.as_u64()).map(|n| n as u32),
@@ -505,7 +510,17 @@ pub fn parse_mihomo_yaml(raw_text: &str) -> Result<(Vec<ProxyProfile>, Vec<Strin
         ));
     }
 
-    let profiles = proxies.iter().map(clash_object_to_profile).collect();
+    let profiles = proxies
+        .iter()
+        .filter(|p| {
+            let typ = s_val(p.get("type")).to_lowercase();
+            !matches!(
+                typ.trim(),
+                "direct" | "reject" | "reject-drop" | "pass" | "compatible"
+            )
+        })
+        .map(clash_object_to_profile)
+        .collect();
     Ok((profiles, provider_urls))
 }
 

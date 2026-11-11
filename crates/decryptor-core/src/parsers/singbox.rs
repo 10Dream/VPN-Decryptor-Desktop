@@ -20,6 +20,8 @@ pub fn parse_singbox_json(raw_text: &str, _file_name: &str) -> Result<Vec<ProxyP
         arr.clone()
     } else if data.get("type").is_some() && data.get("server").is_some() {
         vec![data.clone()]
+    } else if data.get("endpoints").and_then(|v| v.as_array()).is_some() {
+        Vec::new()
     } else {
         return Err(DecryptionError::plain(
             "هیچ بخش outbounds معتبری در فایل Sing-box یافت نشد.",
@@ -57,6 +59,7 @@ pub fn parse_singbox_json(raw_text: &str, _file_name: &str) -> Result<Vec<ProxyP
                 server_port: port,
                 private_key: str_field(o.get("private_key")),
                 public_key: str_field(peer.get("public_key")),
+                peer_public_key: str_field(peer.get("public_key")),
                 preshared_key: str_field(peer.get("pre_shared_key")),
                 local_address: addr.to_string(),
                 reserved,
@@ -148,6 +151,16 @@ pub fn parse_singbox_json(raw_text: &str, _file_name: &str) -> Result<Vec<ProxyP
             obfs_password: str_field(o.get("obfs").and_then(|ob| ob.get("password"))),
             congestion_control: o.get("congestion_control").and_then(|v| v.as_str()).map(|s| s.to_string()),
             udp_relay_mode: o.get("udp_relay_mode").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            private_key: str_field(o.get("private_key")),
+            peer_public_key: str_field(o.get("peer_public_key")),
+            preshared_key: str_field(o.get("pre_shared_key")),
+            local_address: o
+                .get("local_address")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
             server_public_key: o.get("server_public_key").and_then(|v| v.as_str()).map(|s| s.to_string()),
             server_disco_key: o.get("server_disco_key").and_then(|v| v.as_str()).map(|s| s.to_string()),
             derp_map_url: o.get("derp_map_url").and_then(|v| v.as_str()).map(|s| s.to_string()),

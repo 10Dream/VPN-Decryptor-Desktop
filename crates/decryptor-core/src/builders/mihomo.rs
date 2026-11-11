@@ -349,7 +349,12 @@ pub fn format_proxy_yaml(p: &ProxyProfile) -> Option<String> {
             }
         }
         "wireguard" | "wg" => {
-            if !is_valid_curve25519_key(&p.private_key) || !is_valid_curve25519_key(&p.peer_public_key) {
+            let wg_peer_pub = if !p.peer_public_key.trim().is_empty() {
+                p.peer_public_key.trim()
+            } else {
+                p.public_key.trim()
+            };
+            if !is_valid_curve25519_key(&p.private_key) || !is_valid_curve25519_key(wg_peer_pub) {
                 return None;
             }
             push_kv(&mut lines, "type", "wireguard");
@@ -370,7 +375,7 @@ pub fn format_proxy_yaml(p: &ProxyProfile) -> Option<String> {
                 }
             }
             push_kv(&mut lines, "private-key", &ystr(p.private_key.trim()));
-            push_kv(&mut lines, "public-key", &ystr(p.peer_public_key.trim()));
+            push_kv(&mut lines, "public-key", &ystr(wg_peer_pub));
             if is_valid_curve25519_key(&p.preshared_key) {
                 push_kv(&mut lines, "pre-shared-key", &ystr(p.preshared_key.trim()));
             }

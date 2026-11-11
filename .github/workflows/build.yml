@@ -60,6 +60,20 @@ jobs:
           if ($nsis) {
             Copy-Item $nsis.FullName "dist\VPN-Decryptor-Setup.exe"
           }
+          $assetsTable = Get-ChildItem dist | ForEach-Object { "- ``$($_.Name)`` ($([Math]::Round($_.Length / 1MB, 2)) MB / $($_.Length) bytes)" }
+          $testLines = if (Test-Path ci_build.log) {
+            Select-String -Path ci_build.log -Pattern "Running |running \d+ test|test .* \.\.\. |test result:|warning:" | ForEach-Object { $_.Line }
+          } else { @("No test output captured.") }
+          $notes = @(
+            "### Windows x64 Release Assets",
+            ($assetsTable -join "`n"),
+            "",
+            "### Workspace Build & Unit Tests Log",
+            '```text',
+            ($testLines -join "`n"),
+            '```'
+          ) -join "`n"
+          Set-Content -Path ci_release_notes.md -Value $notes -Encoding utf8
           Get-ChildItem dist | Select-Object Name, Length
 
       - name: Upload Build Artifacts
@@ -74,24 +88,28 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           name: "VPN Decryptor Desktop v1.0.${{ github.run_number }}"
           make_latest: true
-          generate_release_notes: true
+          body_path: ci_release_notes.md
           files: |
             dist/*.exe
 
-      - name: Post Failure Log Comment
-        if: failure()
+      - name: Post CI Log Comment
+        if: always()
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if (Test-Path ci_build.log) {
+          if (Test-Path ci_release_notes.md) {
+            $bodyText = Get-Content ci_release_notes.md -Raw
+          } elseif (Test-Path ci_build.log) {
             $tail = (Get-Content ci_build.log -Tail 150) -join "`n"
             $bodyText = "### GitHub Actions Failure Log`n`n``````text`n$tail`n``````"
-            if ($bodyText.Length -gt 60000) { $bodyText = $bodyText.Substring($bodyText.Length - 60000) }
-            $payload = @{ body = $bodyText } | ConvertTo-Json
-            Invoke-RestMethod -Method Post `
-              -Uri "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/comments" `
-              -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" } `
-              -ContentType "application/json; charset=utf-8" `
-              -Body ([System.Text.Encoding]::UTF8.GetBytes($payload))
+          } else {
+            return
           }
+          if ($bodyText.Length -gt 60000) { $bodyText = $bodyText.Substring($bodyText.Length - 60000) }
+          $payload = @{ body = $bodyText } | ConvertTo-Json
+          Invoke-RestMethod -Method Post `
+            -Uri "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/comments" `
+            -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" } `
+            -ContentType "application/json; charset=utf-8" `
+            -Body ([System.Text.Encoding]::UTF8.GetBytes($payload))

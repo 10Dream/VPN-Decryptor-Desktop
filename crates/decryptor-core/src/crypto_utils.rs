@@ -1,5 +1,5 @@
 use aes::cipher::{AsyncStreamCipher, BlockDecrypt, BlockDecryptMut, KeyInit, KeyIvInit};
-use aes_gcm::{aead::Aead as AeadGcm, aead::Payload, Aes256Gcm, Key as GcmKey, Nonce as GcmNonce};
+use aes_gcm::{aead::Aead as AeadGcm, aead::Payload, Aes256Gcm, Nonce as GcmNonce};
 use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
 use cbc::Decryptor as CbcDecryptor;
