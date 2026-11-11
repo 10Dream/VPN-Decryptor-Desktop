@@ -1,18 +1,55 @@
-use decryptor_core::http_client::detect_active_local_proxy;
+use decryptor_core::http_client::{detect_active_local_proxy, detect_active_local_proxy_fresh};
 use decryptor_core::models::{
     LockedFileReport, ProcessBatchResult, ProcessOptions, SourceFileEntry, SourceKind,
     ALL_SUPPORTED_PROTOCOLS, SUPPORTED_FILE_EXTENSIONS,
 };
 use decryptor_core::pipeline::{
-    is_supported_extension, load_app_state, normalize_path_key, process_batch,
+    is_supported_extension, load_app_state, normalize_path_key, process_batch_cancellable,
     record_folder_history, save_app_state, scan_folder_files, AppStateStore, FolderScanResult,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
+
+#[derive(Default)]
+struct ActiveJobState {
+    cancel_flag: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+}
+
+struct CancelGuard {
+    slot: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+    flag: Arc<AtomicBool>,
+}
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.slot.lock() {
+            if let Some(ref cur) = *guard {
+                if Arc::ptr_eq(cur, &self.flag) {
+                    *guard = None;
+                }
+            }
+        }
+    }
+}
+
+fn install_cancel_flag(state: &ActiveJobState) -> (Arc<AtomicBool>, CancelGuard) {
+    let flag = Arc::new(AtomicBool::new(false));
+    if let Ok(mut guard) = state.cancel_flag.lock() {
+        if let Some(prev) = guard.replace(flag.clone()) {
+            prev.store(true, Ordering::SeqCst);
+        }
+    }
+    let guard = CancelGuard {
+        slot: state.cancel_flag.clone(),
+        flag: flag.clone(),
+    };
+    (flag, guard)
+}
 
 fn state_dir_for(app: &AppHandle) -> PathBuf {
     app.path()
@@ -106,7 +143,7 @@ async fn get_initial_state(app: AppHandle) -> Result<InitialAppStatePayload, Str
 
 #[tauri::command]
 async fn detect_proxy_status() -> Option<String> {
-    tauri::async_runtime::spawn_blocking(detect_active_local_proxy)
+    tauri::async_runtime::spawn_blocking(detect_active_local_proxy_fresh)
         .await
         .ok()
         .flatten()
@@ -186,47 +223,51 @@ async fn inspect_dropped_paths(
     paths: Vec<String>,
     include_subfolders: bool,
 ) -> Result<DropInspectResult, String> {
-    let mut accepted = Vec::new();
-    let mut unsupported_names = Vec::new();
-    for raw in paths {
-        let p = PathBuf::from(&raw);
-        if !p.exists() {
-            continue;
-        }
-        if p.is_dir() {
-            let scan = scan_folder_files(&p, include_subfolders, false, None)?;
-            accepted.extend(scan.supported_files);
-        } else if p.is_file() {
-            let ext = p
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            let base_ext = ext.split(" (").next().unwrap_or(&ext);
-            let name = p
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("file")
-                .to_string();
-            if is_supported_extension(base_ext) {
-                let size = fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-                accepted.push(SourceFileEntry {
-                    id: normalize_path_key(&p),
-                    name,
-                    path: Some(p.to_string_lossy().to_string()),
-                    size,
-                    kind: SourceKind::File,
-                    raw_content: None,
-                });
-            } else {
-                unsupported_names.push(name);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut accepted = Vec::new();
+        let mut unsupported_names = Vec::new();
+        for raw in paths {
+            let p = PathBuf::from(&raw);
+            if !p.exists() {
+                continue;
+            }
+            if p.is_dir() {
+                let scan = scan_folder_files(&p, include_subfolders, false, None)?;
+                accepted.extend(scan.supported_files);
+            } else if p.is_file() {
+                let ext = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let base_ext = ext.split(" (").next().unwrap_or(&ext);
+                let name = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("file")
+                    .to_string();
+                if is_supported_extension(base_ext) {
+                    let size = fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                    accepted.push(SourceFileEntry {
+                        id: normalize_path_key(&p),
+                        name,
+                        path: Some(p.to_string_lossy().to_string()),
+                        size,
+                        kind: SourceKind::File,
+                        raw_content: None,
+                    });
+                } else {
+                    unsupported_names.push(name);
+                }
             }
         }
-    }
-    Ok(DropInspectResult {
-        accepted,
-        unsupported_names,
+        Ok(DropInspectResult {
+            accepted,
+            unsupported_names,
+        })
     })
+    .await
+    .map_err(|e| format!("خطا در بررسی فایل‌های رها شده: {}", e))?
 }
 
 #[tauri::command]
@@ -242,12 +283,17 @@ async fn scan_folder(
     state.include_subfolders = include_subfolders;
     let key = normalize_path_key(Path::new(&folder_path));
     let hist = state.imported_folders.get(&key).cloned();
-    let res = scan_folder_files(
-        Path::new(&folder_path),
-        include_subfolders,
-        new_only,
-        hist.as_ref(),
-    )?;
+    let folder_owned = folder_path.clone();
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        scan_folder_files(
+            Path::new(&folder_owned),
+            include_subfolders,
+            new_only,
+            hist.as_ref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("خطا در اسکن پوشه: {}", e))??;
     let _ = save_app_state(&sdir, &state);
     Ok(res)
 }
@@ -262,8 +308,19 @@ async fn clear_folder_history(app: AppHandle, folder_path: String) -> Result<(),
 }
 
 #[tauri::command]
+async fn cancel_decrypt_batch(job_state: tauri::State<'_, ActiveJobState>) -> Result<(), String> {
+    if let Ok(guard) = job_state.cancel_flag.lock() {
+        if let Some(ref flag) = *guard {
+            flag.store(true, Ordering::SeqCst);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn run_decrypt_batch(
     app: AppHandle,
+    job_state: tauri::State<'_, ActiveJobState>,
     req: RunBatchRequest,
 ) -> Result<ProcessBatchResult, String> {
     let sdir = state_dir_for(&app);
@@ -271,12 +328,14 @@ async fn run_decrypt_batch(
     state.options = req.options.clone();
     let saved_passwords = state.passwords.clone();
 
+    let (cancel_flag, _guard) = install_cancel_flag(&job_state);
+
     let app_handle = app.clone();
     let cb = Arc::new(move |ev| {
         let _ = app_handle.emit("decrypt-progress", ev);
     });
 
-    let result = process_batch(
+    let result = process_batch_cancellable(
         &req.sources,
         &req.subscription_urls_text,
         &req.messy_text,
@@ -284,6 +343,7 @@ async fn run_decrypt_batch(
         &saved_passwords,
         &req.options,
         Some(cb),
+        Some(cancel_flag),
     )
     .await?;
 
@@ -301,6 +361,7 @@ async fn run_decrypt_batch(
 #[tauri::command]
 async fn retry_locked_with_password(
     app: AppHandle,
+    job_state: tauri::State<'_, ActiveJobState>,
     req: RetryLockedRequest,
 ) -> Result<ProcessBatchResult, String> {
     let sdir = state_dir_for(&app);
@@ -309,6 +370,8 @@ async fn retry_locked_with_password(
     if req.save_to_vault && !pw.is_empty() && !state.passwords.contains(&pw) {
         state.passwords.push(pw.clone());
     }
+
+    let (cancel_flag, _guard) = install_cancel_flag(&job_state);
 
     let retry_sources: Vec<SourceFileEntry> = req
         .locked_files
@@ -336,7 +399,7 @@ async fn retry_locked_with_password(
         let _ = app_handle.emit("decrypt-progress", ev);
     });
 
-    let result = process_batch(
+    let result = process_batch_cancellable(
         &retry_sources,
         "",
         "",
@@ -344,6 +407,7 @@ async fn retry_locked_with_password(
         &state.passwords,
         &req.options,
         Some(cb),
+        Some(cancel_flag),
     )
     .await?;
 
@@ -377,6 +441,7 @@ async fn open_folder_in_explorer(path: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(ActiveJobState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -388,6 +453,7 @@ pub fn run() {
             inspect_dropped_paths,
             scan_folder,
             clear_folder_history,
+            cancel_decrypt_batch,
             run_decrypt_batch,
             retry_locked_with_password,
             open_folder_in_explorer,

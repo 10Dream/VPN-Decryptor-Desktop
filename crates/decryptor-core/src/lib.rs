@@ -344,4 +344,74 @@ Endpoint = 162.159.192.1:2408
         let (valid_ovpn, _) = filter_and_deduplicate_with_stats(&dec_ovpn.profiles, false, true);
         assert_eq!(valid_ovpn.len(), 2);
     }
+
+    #[test]
+    fn test_media_magic_and_cancellation_protections() {
+        use crate::models::{ProcessOptions, SourceFileEntry, SourceKind};
+        use crate::pipeline::{detect_non_config_media_magic, process_batch_cancellable};
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        // 1. MP4 fake .npvt instant rejection without UTF-8/regex hang
+        let mut fake_mp4 = vec![0x00, 0x00, 0x00, 0x20, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm'];
+        fake_mp4.resize(1024 * 128, 0xAA);
+        assert!(detect_non_config_media_magic(&fake_mp4).is_some());
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let err = rt
+            .block_on(crate::pipeline::decode_bytes_sync_or_async(
+                &fake_mp4,
+                "FakeVideo.npvt",
+                &[],
+                &[],
+                &ProxyMode::DirectOnly,
+                "",
+                0,
+            ))
+            .unwrap_err();
+        assert!(!err.needs_password);
+        assert!(err.message.contains("MP4"));
+
+        // 2. Cooperative cancellation aborts immediately before processing queue
+        let cancel_flag = Arc::new(AtomicBool::new(true));
+        let dummy_src = vec![SourceFileEntry {
+            id: "1".into(),
+            name: "node.txt".into(),
+            path: None,
+            size: 10,
+            kind: SourceKind::File,
+            raw_content: Some("vless://550e8400-e29b-41d4-a716-446655440000@1.1.1.1:443#N1".into()),
+        }];
+        let res = rt.block_on(process_batch_cancellable(
+            &dummy_src,
+            "",
+            "",
+            &[],
+            &[],
+            &ProcessOptions::default(),
+            None,
+            Some(cancel_flag),
+        ));
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("متوقف"));
+    }
+
+    #[test]
+    fn test_duplicate_node_names_fast_counter_uniqueness() {
+        let mut profiles = Vec::with_capacity(1200);
+        for i in 0..1200 {
+            profiles.push(ProxyProfile {
+                protocol: "vless".into(),
+                name: "SameName".into(),
+                server: format!("192.0.2.{}", (i % 250) + 1),
+                server_port: 1000 + (i as u16),
+                uuid: "550e8400-e29b-41d4-a716-446655440000".into(),
+                ..Default::default()
+            });
+        }
+        let mh = build_mihomo_config(&profiles, false, false, true);
+        assert!(mh.contains("\"SameName #1199\""));
+        let sb = build_singbox_config(&profiles, false, false, true);
+        assert!(sb.contains("\"SameName #1199\""));
+    }
 }

@@ -1297,6 +1297,12 @@ pub async fn parse_subscription_text(
     custom_proxy_url: &str,
 ) -> Result<SubscriptionParsed, DecryptionError> {
     let mut content = raw_input.trim().to_string();
+    if content.is_empty() || content.len() > 8 * 1024 * 1024 {
+        return Ok(SubscriptionParsed {
+            format_type: "subscription".to_string(),
+            profiles: Vec::new(),
+        });
+    }
     let is_structured = content.lines().any(|l| {
         let lt = l.trim_start().to_lowercase();
         lt.starts_with("proxies:") || lt.starts_with("proxy-providers:")
@@ -1333,7 +1339,7 @@ pub async fn parse_subscription_text(
                     || cand.contains("#sub")
                     || cand.contains("token=");
                 if should_fetch {
-                    match fetch_text_with_fallback(&cand, proxy_mode, custom_proxy_url, 12).await {
+                    match fetch_text_with_fallback(&cand, proxy_mode, custom_proxy_url, 8).await {
                         Ok(fetched) => {
                             let ft = fetched.trim().to_string();
                             if ft.len() > 20 && !ft.contains("<!DOCTYPE html>") && !ft.contains("<html") {
@@ -1341,7 +1347,7 @@ pub async fn parse_subscription_text(
                             } else if ft.contains("drive.google.com") && ft.contains("confirm=") {
                                 if let Some(cap) = Regex::new(r"confirm=([0-9A-Za-z_]+)").unwrap().captures(&ft) {
                                     let confirm_url = format!("{}&confirm={}", cand, &cap[1]);
-                                    if let Ok(c_txt) = fetch_text_with_fallback(&confirm_url, proxy_mode, custom_proxy_url, 12).await {
+                                    if let Ok(c_txt) = fetch_text_with_fallback(&confirm_url, proxy_mode, custom_proxy_url, 8).await {
                                         content = c_txt.trim().to_string();
                                     }
                                 }

@@ -270,14 +270,22 @@
 
     <!-- RUN BUTTON & LIVE PROGRESS -->
     <section class="run-bar" aria-label="اجرای عملیات">
-      <button type="button" id="btn-run-process" class="btn btn-primary btn-large">
-        شروع پردازش و رمزگشایی
-      </button>
+      <div class="run-actions">
+        <button type="button" id="btn-run-process" class="btn btn-primary btn-large">
+          شروع پردازش و رمزگشایی
+        </button>
+        <button type="button" id="btn-cancel-process" class="btn btn-danger-outline btn-large" hidden>
+          توقف پردازش
+        </button>
+      </div>
 
       <div id="progress-box" class="progress-box" hidden aria-live="polite">
         <div class="progress-meta">
           <span id="progress-item-label">در حال آماده‌سازی...</span>
-          <strong id="progress-percent-label" class="ltr-inline">0%</strong>
+          <span class="progress-stats-right">
+            <span id="progress-elapsed-label" class="muted-text ltr-inline">00:00</span>
+            <strong id="progress-percent-label" class="ltr-inline">0%</strong>
+          </span>
         </div>
         <progress id="progress-bar" max="100" value="0" class="m3-progress"></progress>
       </div>

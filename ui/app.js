@@ -161,8 +161,15 @@ function renderQueue() {
   const list = $('queued-files-list');
   list.innerHTML = '';
   let totalSize = 0;
-  appState.queuedSources.forEach((src, index) => {
-    totalSize += src.size || 0;
+  for (let i = 0; i < count; i += 1) {
+    totalSize += appState.queuedSources[i].size || 0;
+  }
+
+  const maxVisible = 150;
+  const frag = document.createDocumentFragment();
+  const visibleCount = Math.min(count, maxVisible);
+  for (let index = 0; index < visibleCount; index += 1) {
+    const src = appState.queuedSources[index];
     const li = document.createElement('li');
     li.className = 'queued-item';
     const nameSpan = document.createElement('span');
@@ -190,8 +197,15 @@ function renderQueue() {
 
     rightWrap.append(sizeSpan, rmBtn);
     li.append(nameSpan, rightWrap);
-    list.appendChild(li);
-  });
+    frag.appendChild(li);
+  }
+  if (count > maxVisible) {
+    const more = document.createElement('li');
+    more.className = 'queued-item muted-text';
+    more.textContent = `... و ${count - maxVisible} فایل دیگر در صف (تمام ${count} فایل پردازش می‌شوند)`;
+    frag.appendChild(more);
+  }
+  list.appendChild(frag);
 
   $('queued-meta').textContent = count > 0 ? `حجم کل: ${formatBytes(totalSize)}` : '';
 }
@@ -380,12 +394,23 @@ function renderBatchResult(res) {
     $('failed-list-box').hidden = false;
     const ul = $('failed-list');
     ul.innerHTML = '';
-    res.failedSources.forEach((f) => {
+    const maxFailed = 200;
+    const failFrag = document.createDocumentFragment();
+    const shownCount = Math.min(res.failedSources.length, maxFailed);
+    for (let i = 0; i < shownCount; i += 1) {
+      const f = res.failedSources[i];
       const li = document.createElement('li');
       li.className = 'locked-modal-row';
       li.textContent = `${f.fileName} — ${f.error}`;
-      ul.appendChild(li);
-    });
+      failFrag.appendChild(li);
+    }
+    if (res.failedSources.length > maxFailed) {
+      const moreLi = document.createElement('li');
+      moreLi.className = 'locked-modal-row muted-text';
+      moreLi.textContent = `... و ${res.failedSources.length - maxFailed} مورد دیگر`;
+      failFrag.appendChild(moreLi);
+    }
+    ul.appendChild(failFrag);
   } else {
     $('failed-list-box').hidden = true;
   }
@@ -449,6 +474,26 @@ function openLockedModal(lockedFiles) {
 }
 
 // ---------------- EXECUTION ----------------
+function formatElapsedMMSS(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+  const s = String(totalSec % 60).padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+async function cancelDecryptBatch() {
+  if (!invoke) return;
+  const btn = $('btn-cancel-process');
+  btn.disabled = true;
+  btn.textContent = 'در حال توقف ایمن...';
+  $('progress-item-label').textContent = 'در حال توقف پردازش به درخواست شما...';
+  try {
+    await invoke('cancel_decrypt_batch');
+  } catch (err) {
+    showAlert(String(err));
+  }
+}
+
 async function runDecryptBatch() {
   clearAlert();
   const subsText = $('textarea-subs').value;
@@ -468,10 +513,20 @@ async function runDecryptBatch() {
   const batchPasswords = batchPwRaw ? [batchPwRaw] : [];
 
   $('btn-run-process').disabled = true;
+  const cancelBtn = $('btn-cancel-process');
+  cancelBtn.hidden = false;
+  cancelBtn.disabled = false;
+  cancelBtn.textContent = 'توقف پردازش';
+
   $('progress-box').hidden = false;
   $('progress-bar').value = 5;
   $('progress-percent-label').textContent = '5%';
   $('progress-item-label').textContent = 'در حال شروع پردازش...';
+  const startedAt = Date.now();
+  $('progress-elapsed-label').textContent = '00:00';
+  const elapsedTimer = setInterval(() => {
+    $('progress-elapsed-label').textContent = formatElapsedMMSS(Date.now() - startedAt);
+  }, 500);
 
   try {
     const result = await invoke('run_decrypt_batch', {
@@ -492,7 +547,11 @@ async function runDecryptBatch() {
   } catch (err) {
     showAlert(String(err));
   } finally {
+    clearInterval(elapsedTimer);
     $('btn-run-process').disabled = false;
+    cancelBtn.hidden = true;
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = 'توقف پردازش';
   }
 }
 
@@ -749,6 +808,7 @@ async function bootstrap() {
   });
 
   $('btn-run-process').addEventListener('click', runDecryptBatch);
+  $('btn-cancel-process').addEventListener('click', cancelDecryptBatch);
   $('btn-open-locked-modal').addEventListener('click', () => {
     if (appState.lastResult?.lockedFiles) openLockedModal(appState.lastResult.lockedFiles);
   });

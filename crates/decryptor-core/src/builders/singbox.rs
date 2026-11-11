@@ -6,7 +6,7 @@ use crate::sanitizer::{
 };
 use regex::Regex;
 use serde_json::{json, Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const VALID_UTLS_FPS: &[&str] = &[
     "chrome",
@@ -581,6 +581,7 @@ pub fn build_singbox_config(
 
     let mut endpoints = Vec::new();
     let mut outbounds = Vec::new();
+    let mut tag_counters: HashMap<String, usize> = HashMap::new();
     let mut proxy_tags = Vec::new();
 
     for (i, p) in profiles.iter().enumerate() {
@@ -592,10 +593,16 @@ pub fn build_singbox_config(
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| format!("Proxy-{}", i + 1));
             let mut unique_tag = base_tag.clone();
-            let mut cnt = 1usize;
-            while !used_tags.insert(unique_tag.clone()) {
-                unique_tag = format!("{} #{}", base_tag, cnt);
-                cnt += 1;
+            if !used_tags.insert(unique_tag.clone()) {
+                let next = tag_counters.entry(base_tag.clone()).or_insert(1);
+                loop {
+                    let cand = format!("{} #{}", base_tag, *next);
+                    *next += 1;
+                    if used_tags.insert(cand.clone()) {
+                        unique_tag = cand;
+                        break;
+                    }
+                }
             }
             if let Some(obj) = ob.as_object_mut() {
                 obj.insert("tag".into(), Value::String(unique_tag.clone()));
