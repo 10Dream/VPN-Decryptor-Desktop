@@ -101,6 +101,7 @@ pub fn parse_wireguard_conf(raw_text: &str, file_name: &str) -> Result<ProxyProf
         server_port: port,
         private_key: iface.get("privatekey").cloned().unwrap_or_default(),
         public_key: peer.get("publickey").cloned().unwrap_or_default(),
+        peer_public_key: peer.get("publickey").cloned().unwrap_or_default(),
         preshared_key: peer.get("presharedkey").cloned().unwrap_or_default(),
         local_address: iface
             .get("address")

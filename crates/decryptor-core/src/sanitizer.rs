@@ -1,7 +1,7 @@
 use crate::crypto_utils::{base64_decode_safe, base64_encode_std};
 use crate::models::{FilterStats, ProxyProfile};
 use regex::Regex;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::OnceLock;
 

@@ -506,8 +506,13 @@ pub fn profile_to_xray_uri(p: &ProxyProfile) -> Option<String> {
             if !p.local_address.is_empty() {
                 q.push(("address".into(), p.local_address.clone()));
             }
-            if !p.peer_public_key.is_empty() {
-                q.push(("publickey".into(), p.peer_public_key.clone()));
+            let wg_peer_pub = if !p.peer_public_key.is_empty() {
+                &p.peer_public_key
+            } else {
+                &p.public_key
+            };
+            if !wg_peer_pub.is_empty() {
+                q.push(("publickey".into(), wg_peer_pub.clone()));
             }
             if !p.preshared_key.is_empty() {
                 q.push(("presharedkey".into(), p.preshared_key.clone()));

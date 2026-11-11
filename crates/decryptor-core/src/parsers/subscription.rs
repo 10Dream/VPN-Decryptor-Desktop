@@ -418,11 +418,11 @@ pub fn parse_amnezia_vpn_uri(uri: &str) -> Vec<ProxyProfile> {
 
         if c_type.contains("awg") || c_type.contains("wireguard") || c.get("awg").is_some() || c.get("wireguard").is_some() {
             if let Some(awg) = c.get("awg").or_else(|| c.get("wireguard")) {
-                let last_conf: Value = awg
+                let last_conf_raw = awg
                     .get("last_config")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| serde_json::from_str(s).ok())
-                    .unwrap_or(Value::Null);
+                    .unwrap_or("");
+                let last_conf: Value = serde_json::from_str(last_conf_raw).unwrap_or(Value::Null);
                 let get_s = |k: &str| {
                     last_conf
                         .get(k)
@@ -433,52 +433,79 @@ pub fn parse_amnezia_vpn_uri(uri: &str) -> Vec<ProxyProfile> {
                             _ => None,
                         })
                 };
-                let srv = get_s("hostName").unwrap_or_else(|| host_name.clone());
-                let port = get_s("port").and_then(|s| s.parse::<u16>().ok()).unwrap_or(51820);
-                let priv_key = get_s("client_priv_key").unwrap_or_default();
-                let peer_pub = get_s("server_pub_key").unwrap_or_default();
-                let psk = get_s("psk_key").unwrap_or_default();
-                let client_ip = get_s("client_ip")
-                    .unwrap_or_else(|| "10.8.1.2".to_string())
-                    .split('/')
-                    .next()
-                    .unwrap_or("10.8.1.2")
-                    .to_string();
-                let mtu = get_s("mtu").and_then(|s| s.parse::<u32>().ok()).unwrap_or(1420);
+                let ini_candidate = last_conf
+                    .get("config")
+                    .or_else(|| awg.get("config"))
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        if last_conf_raw.contains("[Interface]") {
+                            Some(last_conf_raw)
+                        } else {
+                            None
+                        }
+                    });
+                let mut pushed_from_ini = false;
+                if let Some(ini_txt) = ini_candidate {
+                    if let Ok(mut wg) = crate::parsers::wireguard::parse_wireguard_conf(ini_txt, &desc) {
+                        wg.name = clean_proxy_name(&format!("{} (AWG)", desc), "AmneziaWG");
+                        if (wg.server == "127.0.0.1" || wg.server.is_empty()) && host_name != "127.0.0.1" {
+                            wg.server = get_s("hostName").unwrap_or_else(|| host_name.clone());
+                        }
+                        if wg.dns.is_empty() {
+                            wg.dns = vec![dns1.clone(), dns2.clone()];
+                        }
+                        results.push(wg);
+                        pushed_from_ini = true;
+                    }
+                }
+                if !pushed_from_ini {
+                    let srv = get_s("hostName").unwrap_or_else(|| host_name.clone());
+                    let port = get_s("port").and_then(|s| s.parse::<u16>().ok()).unwrap_or(51820);
+                    let priv_key = get_s("client_priv_key").unwrap_or_default();
+                    let peer_pub = get_s("server_pub_key").unwrap_or_default();
+                    let psk = get_s("psk_key").unwrap_or_default();
+                    let client_ip = get_s("client_ip")
+                        .unwrap_or_else(|| "10.8.1.2".to_string())
+                        .split('/')
+                        .next()
+                        .unwrap_or("10.8.1.2")
+                        .to_string();
+                    let mtu = get_s("mtu").and_then(|s| s.parse::<u32>().ok()).unwrap_or(1420);
 
-                let has_awg = get_s("Jc").is_some() || get_s("H1").is_some();
-                let amnezia_options = if has_awg {
-                    Some(AmneziaWgOptions {
-                        jc: get_s("Jc").and_then(|s| s.parse().ok()),
-                        jmin: get_s("Jmin").and_then(|s| s.parse().ok()),
-                        jmax: get_s("Jmax").and_then(|s| s.parse().ok()),
-                        s1: get_s("S1").and_then(|s| s.parse().ok()),
-                        s2: get_s("S2").and_then(|s| s.parse().ok()),
-                        h1: get_s("H1"),
-                        h2: get_s("H2"),
-                        h3: get_s("H3"),
-                        h4: get_s("H4"),
+                    let has_awg = get_s("Jc").is_some() || get_s("H1").is_some();
+                    let amnezia_options = if has_awg {
+                        Some(AmneziaWgOptions {
+                            jc: get_s("Jc").and_then(|s| s.parse().ok()),
+                            jmin: get_s("Jmin").and_then(|s| s.parse().ok()),
+                            jmax: get_s("Jmax").and_then(|s| s.parse().ok()),
+                            s1: get_s("S1").and_then(|s| s.parse().ok()),
+                            s2: get_s("S2").and_then(|s| s.parse().ok()),
+                            h1: get_s("H1"),
+                            h2: get_s("H2"),
+                            h3: get_s("H3"),
+                            h4: get_s("H4"),
+                            ..Default::default()
+                        })
+                    } else {
+                        None
+                    };
+
+                    results.push(ProxyProfile {
+                        name: clean_proxy_name(&format!("{} (AWG)", desc), "AmneziaWG"),
+                        protocol: "wireguard".to_string(),
+                        server: srv,
+                        server_port: port,
+                        private_key: priv_key,
+                        peer_public_key: peer_pub.clone(),
+                        public_key: peer_pub,
+                        preshared_key: psk,
+                        local_address: client_ip,
+                        dns: vec![dns1.clone(), dns2.clone()],
+                        mtu: Some(mtu),
+                        amnezia_options,
                         ..Default::default()
-                    })
-                } else {
-                    None
-                };
-
-                results.push(ProxyProfile {
-                    name: clean_proxy_name(&format!("{} (AWG)", desc), "AmneziaWG"),
-                    protocol: "wireguard".to_string(),
-                    server: srv,
-                    server_port: port,
-                    private_key: priv_key,
-                    peer_public_key: peer_pub.clone(),
-                    public_key: peer_pub,
-                    preshared_key: psk,
-                    local_address: client_ip,
-                    dns: vec![dns1.clone(), dns2.clone()],
-                    mtu: Some(mtu),
-                    amnezia_options,
-                    ..Default::default()
-                });
+                    });
+                }
             }
         }
 

@@ -254,7 +254,12 @@ pub fn extract_filename_password_hints(file_name: &str) -> Vec<String> {
         let p = part.trim();
         if p.len() >= 3 {
             hints.push(p.to_string());
-            if !p.starts_with('@') {
+            if let Some(bare) = p.strip_prefix('@') {
+                if bare.len() >= 3 {
+                    hints.push(bare.to_string());
+                    hints.push(bare.to_lowercase());
+                }
+            } else {
                 hints.push(format!("@{}", p));
             }
             hints.push(p.to_lowercase());

@@ -463,8 +463,13 @@ pub fn build_singbox_outbound(p: &ProxyProfile, index: usize) -> Option<(Value, 
             Some((Value::Object(ob), false))
         }
         "wireguard" | "wg" => {
+            let wg_peer_pub = if !p.peer_public_key.trim().is_empty() {
+                p.peer_public_key.trim()
+            } else {
+                p.public_key.trim()
+            };
             if !is_valid_curve25519_key(&p.private_key)
-                || !is_valid_curve25519_key(&p.peer_public_key)
+                || !is_valid_curve25519_key(wg_peer_pub)
             {
                 return None;
             }
@@ -510,7 +515,7 @@ pub fn build_singbox_outbound(p: &ProxyProfile, index: usize) -> Option<(Value, 
                 "port".into(),
                 json!(if p.server_port == 0 { 51820 } else { p.server_port }),
             );
-            peer.insert("public_key".into(), Value::String(p.peer_public_key.trim().into()));
+            peer.insert("public_key".into(), Value::String(wg_peer_pub.into()));
             if is_valid_curve25519_key(&p.preshared_key) {
                 peer.insert(
                     "pre_shared_key".into(),
