@@ -1090,7 +1090,7 @@ pub fn parse_uri_config(uri_in: &str) -> Option<ProxyProfile> {
         let (srv_raw, port_s) = host_port.rsplit_once(':')?;
         let server = srv_raw.trim_matches(|c| c == '[' || c == ']').to_string();
         let port = port_s.parse::<u16>().unwrap_or(8388);
-        let (method, password) = if let Some((m, pw)) = auth.split_once(':') {
+        let (method_raw, password_raw) = if let Some((m, pw)) = auth.split_once(':') {
             (m.to_string(), pw.to_string())
         } else if let Ok(dec) = base64_decode_safe(&auth) {
             let ds = String::from_utf8_lossy(&dec).into_owned();
@@ -1102,6 +1102,8 @@ pub fn parse_uri_config(uri_in: &str) -> Option<ProxyProfile> {
         } else {
             ("aes-128-gcm".to_string(), auth)
         };
+        let method = percent_decode_plus(&method_raw, false);
+        let password = percent_decode_plus(&password_raw, false);
         return Some(ProxyProfile {
             name: clean_proxy_name(&raw_name, "ss"),
             protocol: "shadowsocks".to_string(),

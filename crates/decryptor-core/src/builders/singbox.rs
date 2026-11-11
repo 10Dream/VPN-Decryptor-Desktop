@@ -197,14 +197,15 @@ pub fn build_singbox_outbound(p: &ProxyProfile, index: usize) -> Option<(Value, 
             ob.insert("server".into(), Value::String(p.server.trim().into()));
             ob.insert("server_port".into(), json!(port));
             ob.insert("uuid".into(), Value::String(p.uuid.trim().into()));
-            ob.insert(
-                "security".into(),
-                Value::String(if p.cipher.is_empty() {
-                    "auto".into()
-                } else {
-                    p.cipher.clone()
-                }),
-            );
+            let raw_sec = p.cipher.to_lowercase();
+            let vm_sec = match raw_sec.trim() {
+                "auto" | "aes-128-gcm" | "chacha20-poly1305" | "none" | "zero" => raw_sec.trim(),
+                _ => match p.security.to_lowercase().trim() {
+                    "aes-128-gcm" | "chacha20-poly1305" | "none" | "zero" => p.security.trim(),
+                    _ => "auto",
+                },
+            };
+            ob.insert("security".into(), Value::String(vm_sec.to_string()));
             ob.insert("alter_id".into(), json!(p.alter_id.unwrap_or(0)));
             if let Some(tls) = build_tls_object(p, false) {
                 ob.insert("tls".into(), tls);
@@ -241,22 +242,25 @@ pub fn build_singbox_outbound(p: &ProxyProfile, index: usize) -> Option<(Value, 
             if p.password.is_empty() {
                 return None;
             }
+            let raw_cipher = if !p.method.trim().is_empty() {
+                p.method.as_str()
+            } else if !p.cipher.trim().is_empty() {
+                p.cipher.as_str()
+            } else {
+                "aes-256-gcm"
+            };
+            let (mut method, password) =
+                crate::sanitizer::normalize_ss_method_and_password(raw_cipher, &p.password);
+            if !crate::sanitizer::is_valid_singbox_ss_cipher(&method) {
+                method = "aes-128-gcm".to_string();
+            }
             let mut ob = Map::new();
             ob.insert("type".into(), Value::String("shadowsocks".into()));
             ob.insert("tag".into(), Value::String(tag));
             ob.insert("server".into(), Value::String(p.server.trim().into()));
             ob.insert("server_port".into(), json!(port));
-            ob.insert(
-                "method".into(),
-                Value::String(if !p.cipher.is_empty() {
-                    p.cipher.clone()
-                } else if !p.method.is_empty() {
-                    p.method.clone()
-                } else {
-                    "aes-256-gcm".into()
-                }),
-            );
-            ob.insert("password".into(), Value::String(p.password.clone()));
+            ob.insert("method".into(), Value::String(method));
+            ob.insert("password".into(), Value::String(password));
             Some((Value::Object(ob), false))
         }
         "socks5" | "socks" => {

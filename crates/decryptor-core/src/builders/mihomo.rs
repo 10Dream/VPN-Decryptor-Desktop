@@ -58,13 +58,21 @@ pub fn format_proxy_yaml(p: &ProxyProfile) -> Option<String> {
                 push_kv(&mut lines, "uuid", &ystr(p.uuid.trim()));
                 if mtype == "vmess" {
                     push_kv(&mut lines, "alterId", &p.alter_id.unwrap_or(0).to_string());
-                    let c = if p.cipher.is_empty() { "auto" } else { p.cipher.as_str() };
-                    push_kv(&mut lines, "cipher", &ystr(c));
+                    let raw_c = p.cipher.to_lowercase();
+                    let vm_c = match raw_c.trim() {
+                        "auto" | "aes-128-gcm" | "chacha20-poly1305" | "none" | "zero" => raw_c.trim(),
+                        _ => "auto",
+                    };
+                    push_kv(&mut lines, "cipher", &ystr(vm_c));
                 } else {
                     if !p.flow.is_empty() {
                         push_kv(&mut lines, "flow", &ystr(&p.flow));
                     }
-                    if !p.encryption.is_empty() && p.encryption != "none" {
+                    let enc_low = p.encryption.to_lowercase();
+                    if !enc_low.is_empty()
+                        && enc_low != "none"
+                        && (enc_low.contains("mlkem") || enc_low.matches('.').count() >= 2)
+                    {
                         push_kv(&mut lines, "encryption", &ystr(&p.encryption));
                     }
                 }
@@ -155,10 +163,10 @@ pub fn format_proxy_yaml(p: &ProxyProfile) -> Option<String> {
                         lines.push(format!("      grpc-service-name: {}", ystr(svc)));
                     }
                 }
-                "h2" | "http" => {
-                    push_kv(&mut lines, "network", if net == "h2" { "h2" } else { "http" });
+                "h2" => {
+                    push_kv(&mut lines, "network", "h2");
                     if !p.path.is_empty() || !p.host.is_empty() {
-                        lines.push(format!("    {}-opts:", if net == "h2" { "h2" } else { "http" }));
+                        lines.push("    h2-opts:".to_string());
                         if !p.path.is_empty() {
                             lines.push(format!("      path: {}", ystr(&p.path)));
                         }
@@ -168,27 +176,42 @@ pub fn format_proxy_yaml(p: &ProxyProfile) -> Option<String> {
                         }
                     }
                 }
+                "http" => {
+                    push_kv(&mut lines, "network", "http");
+                    if !p.path.is_empty() || !p.host.is_empty() {
+                        lines.push("    http-opts:".to_string());
+                        let http_path = if p.path.is_empty() { "/" } else { p.path.as_str() };
+                        lines.push(format!("      path: [{}]", ystr(http_path)));
+                        if !p.host.is_empty() {
+                            lines.push("      headers:".to_string());
+                            lines.push("        Host:".to_string());
+                            lines.push(format!("          - {}", ystr(&p.host)));
+                        }
+                    }
+                }
                 _ => {
                     push_kv(&mut lines, "network", "tcp");
                 }
             }
         }
         "shadowsocks" | "ss" => {
-            let cipher = if !p.cipher.is_empty() {
-                p.cipher.as_str()
-            } else if !p.method.is_empty() {
-                p.method.as_str()
-            } else {
-                "aes-256-gcm"
-            };
             if p.password.is_empty() {
                 return None;
             }
+            let raw_cipher = if !p.method.trim().is_empty() {
+                p.method.as_str()
+            } else if !p.cipher.trim().is_empty() {
+                p.cipher.as_str()
+            } else {
+                "aes-256-gcm"
+            };
+            let (cipher, password) =
+                crate::sanitizer::normalize_ss_method_and_password(raw_cipher, &p.password);
             push_kv(&mut lines, "type", "ss");
             push_kv(&mut lines, "server", &ystr(p.server.trim()));
             push_kv(&mut lines, "port", &p.server_port.to_string());
-            push_kv(&mut lines, "cipher", &ystr(cipher));
-            push_kv(&mut lines, "password", &ystr(&p.password));
+            push_kv(&mut lines, "cipher", &ystr(&cipher));
+            push_kv(&mut lines, "password", &ystr(&password));
             push_kv(&mut lines, "udp", "true");
             if !p.obfs.is_empty() && !p.obfs.eq_ignore_ascii_case("plain") {
                 push_kv(&mut lines, "plugin", "\"obfs\"");

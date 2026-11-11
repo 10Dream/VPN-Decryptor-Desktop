@@ -32,8 +32,8 @@ pub const ALL_SUPPORTED_PROTOCOLS: &[&str] = &[
 ];
 
 pub const SUPPORTED_FILE_EXTENSIONS: &[&str] = &[
-    "npvt", "npvs", "dark", "nm", "hat", "slip", "ssc", "hc", "bpf", "ovpn", "yaml", "yml",
-    "json", "txt", "text", "conf", "sub", "list", "zip", "ehi", "inpv",
+    "npvt", "npvs", "dark", "darktunnel", "nm", "hat", "slip", "ssc", "hc", "bpf", "ovpn",
+    "yaml", "yml", "json", "txt", "text", "conf", "sub", "list", "zip", "ehi", "inpv",
 ];
 
 pub const MIHOMO_EXCLUSIVE_PROTOS: &[&str] = &[

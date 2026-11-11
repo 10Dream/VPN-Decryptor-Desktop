@@ -410,7 +410,9 @@ function renderBatchResult(res) {
     li.textContent = 'مطابق تنظیمات فعلی هیچ فایلی روی دیسک نوشته نشد (احتمالاً همه گزینه‌های خروجی غیرفعال هستند).';
     filesUl.appendChild(li);
   } else {
-    res.writtenFiles.forEach((wf) => {
+    const MAX_LIST_ROWS = 250;
+    const shownFiles = res.writtenFiles.slice(0, MAX_LIST_ROWS);
+    shownFiles.forEach((wf) => {
       const li = document.createElement('li');
       li.className = 'written-file-row';
       const pSpan = document.createElement('span');
@@ -422,6 +424,12 @@ function renderBatchResult(res) {
       li.append(pSpan, meta);
       filesUl.appendChild(li);
     });
+    if (res.writtenFiles.length > MAX_LIST_ROWS) {
+      const more = document.createElement('li');
+      more.className = 'muted-text';
+      more.textContent = `... و ${res.writtenFiles.length - MAX_LIST_ROWS} فایل خروجی دیگر در پوشه مقصد ذخیره شد (برای مشاهده همه روی «باز کردن پوشه خروجی» کلیک کنید).`;
+      filesUl.appendChild(more);
+    }
   }
 
   $('results-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
