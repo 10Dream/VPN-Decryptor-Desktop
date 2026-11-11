@@ -31,16 +31,98 @@ use flate2::read::GzDecoder;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
 pub type ProgressCallback = Option<Arc<dyn Fn(ProgressEventPayload) + Send + Sync>>;
+pub type CancelFlag = Option<Arc<AtomicBool>>;
+
+const MAX_SINGLE_SOURCE_BYTES: u64 = 24 * 1024 * 1024;
+const MAX_PLAIN_TEXT_SCAN_BYTES: usize = 4 * 1024 * 1024;
+const MAX_ZIP_ENTRIES: usize = 400;
+const MAX_ZIP_TOTAL_BYTES: usize = 32 * 1024 * 1024;
+const PER_SOURCE_TIMEOUT_SECS: u64 = 25;
+
+#[inline]
+fn is_cancelled(flag: &CancelFlag) -> bool {
+    flag.as_ref()
+        .map(|f| f.load(Ordering::Relaxed))
+        .unwrap_or(false)
+}
+
+/// Immediately rejects unmistakable media, archive (non-zip), database, or executable headers
+/// before attempting expensive UTF-8 lossy decoding or regex scanning.
+pub fn detect_non_config_media_magic(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        return Some("فایل ویدیویی/رسانه‌ای غیرمرتبط (MP4/MOV) است و حاوی کانفیگ نیست.");
+    }
+    if bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
+        return Some("فایل ویدیویی غیرمرتبط (MKV/WebM) است و حاوی کانفیگ نیست.");
+    }
+    if bytes.len() >= 12
+        && &bytes[0..4] == b"RIFF"
+        && matches!(&bytes[8..12], b"AVI " | b"WAVE" | b"WEBP")
+    {
+        return Some("فایل رسانه‌ای غیرمرتبط (AVI/WAV/WebP) است و حاوی کانفیگ نیست.");
+    }
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("فایل تصویری غیرمرتبط (PNG) است.");
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("فایل تصویری غیرمرتبط (JPEG) است.");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("فایل تصویری غیرمرتبط (GIF) است.");
+    }
+    if bytes.starts_with(b"%PDF-") {
+        return Some("فایل سند PDF است و حاوی کانفیگ مستقیم نیست.");
+    }
+    if bytes.starts_with(b"Rar!\x1a\x07") || bytes.starts_with(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C])
+    {
+        return Some("فایل آرشیو RAR/7z پشتیبانی نمی‌شود؛ لطفاً ابتدا آن را از حالت فشرده خارج کنید.");
+    }
+    if bytes.starts_with(b"SQLite format 3\0") {
+        return Some("فایل دیتابیس SQLite است و حاوی کانفیگ متنی نیست.");
+    }
+    if bytes.starts_with(b"\x7fELF") || bytes.starts_with(&[0xCF, 0xFA, 0xED, 0xFE]) {
+        return Some("فایل اجرایی باینری (ELF/Mach-O) است.");
+    }
+    if bytes.len() > 128 && &bytes[0..2] == b"MZ" {
+        let pe_off = u32::from_le_bytes([bytes[0x3C], bytes[0x3D], bytes[0x3E], bytes[0x3F]]) as usize;
+        if pe_off > 0x40 && pe_off + 4 <= bytes.len() && &bytes[pe_off..pe_off + 4] == b"PE\0\0" {
+            return Some("فایل اجرایی ویندوز (EXE/DLL) است.");
+        }
+    }
+    if bytes.starts_with(b"OggS") || bytes.starts_with(b"fLaC") || (bytes.len() > 128 && bytes.starts_with(b"ID3")) {
+        return Some("فایل صوتی غیرمرتبط است و حاوی کانفیگ نیست.");
+    }
+    None
+}
+
+fn looks_mostly_binary(bytes: &[u8]) -> bool {
+    let sample_len = bytes.len().min(8192);
+    if sample_len < 32 {
+        return false;
+    }
+    let sample = &bytes[..sample_len];
+    let mut nul_count = 0usize;
+    let mut ctrl_count = 0usize;
+    for &b in sample {
+        if b == 0 {
+            nul_count += 1;
+        } else if b < 0x20 && !matches!(b, b'\r' | b'\n' | b'\t' | 0x0C) {
+            ctrl_count += 1;
+        }
+    }
+    nul_count > 4 || (ctrl_count * 100 / sample_len) > 20
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -708,15 +790,20 @@ pub fn decode_bytes_sync_or_async<'a>(
     Box<dyn std::future::Future<Output = Result<DecryptedSourceOutput, DecryptionError>> + Send + 'a>,
 > {
     Box::pin(async move {
+        if raw_bytes.is_empty() {
+            return Err(DecryptionError::plain("فایل خالی است."));
+        }
+        if let Some(media_err) = detect_non_config_media_magic(raw_bytes) {
+            return Err(DecryptionError::plain(media_err));
+        }
+
         let raw_ext = Path::new(file_name)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("");
         let ext = normalize_extension(raw_ext);
-        let text = String::from_utf8_lossy(raw_bytes).into_owned();
-        let trimmed = text.trim_start_matches('\u{FEFF}').trim();
 
-        // 1. ZIP Archive recursion
+        // 1. ZIP Archive recursion (guard against zip bombs & huge archives)
         if ext == "zip" || (raw_bytes.len() >= 4 && &raw_bytes[0..4] == b"PK\x03\x04") {
             if depth >= 2 {
                 return Err(DecryptionError::plain(
@@ -730,19 +817,32 @@ pub fn decode_bytes_sync_or_async<'a>(
             let mut combined_profiles = Vec::new();
             let mut combined_dns = Vec::new();
             let mut warnings = Vec::new();
+            let mut total_unpacked: usize = 0;
 
-            for i in 0..archive.len() {
-                let Ok(mut entry) = archive.by_index(i) else {
+            let entry_limit = archive.len().min(MAX_ZIP_ENTRIES);
+            for i in 0..entry_limit {
+                let Ok(entry) = archive.by_index(i) else {
                     continue;
                 };
                 if entry.is_dir() {
                     continue;
                 }
                 let inner_name = entry.name().to_string();
+                let remaining = MAX_ZIP_TOTAL_BYTES.saturating_sub(total_unpacked);
+                if remaining == 0 {
+                    warnings.push("محدودیت حجم استخراج فایل ZIP تکمیل شد.".to_string());
+                    break;
+                }
                 let mut buf = Vec::new();
-                if entry.read_to_end(&mut buf).is_err() || buf.is_empty() {
+                let mut limited = entry.take((remaining as u64) + 1);
+                if limited.read_to_end(&mut buf).is_err() || buf.is_empty() {
                     continue;
                 }
+                if buf.len() > remaining {
+                    warnings.push(format!("{}: حجم فایل داخلی بیش از حد مجاز است.", inner_name));
+                    continue;
+                }
+                total_unpacked += buf.len();
                 match decode_bytes_sync_or_async(
                     &buf,
                     &inner_name,
@@ -762,6 +862,7 @@ pub fn decode_bytes_sync_or_async<'a>(
                         warnings.push(format!("{}: {}", inner_name, e.message));
                     }
                 }
+                tokio::task::yield_now().await;
             }
             if combined_profiles.is_empty() && combined_dns.is_empty() {
                 return Err(DecryptionError::plain(if warnings.is_empty() {
@@ -784,13 +885,18 @@ pub fn decode_bytes_sync_or_async<'a>(
             });
         }
 
-        // 2. NPVS binary magic or .npvs/.npv/.npv4
+        // 2. NPVS binary magic or .npvs/.npv/.npv4 (run PBKDF2 cascade off async worker thread)
         let is_npvs_magic = raw_bytes.len() >= 4 && &raw_bytes[0..4] == b"NPVS";
         if is_npvs_magic || matches!(ext.as_str(), "npvs" | "npv" | "npv4") {
-            let decoded =
-                apply_password_cascade(batch_passwords, saved_passwords, file_name, |pwd| {
-                    decrypt_npvs(raw_bytes, pwd)
-                })?;
+            let owned_bytes = raw_bytes.to_vec();
+            let bp = batch_passwords.to_vec();
+            let sp = saved_passwords.to_vec();
+            let fname = file_name.to_string();
+            let decoded = tokio::task::spawn_blocking(move || {
+                apply_password_cascade(&bp, &sp, &fname, |pwd| decrypt_npvs(&owned_bytes, pwd))
+            })
+            .await
+            .map_err(|e| DecryptionError::plain(format!("خطای داخلی در رمزگشایی: {}", e)))??;
             let exp = check_expiration_json(&decoded.policy);
             let exp_raw = decoded
                 .policy
@@ -829,6 +935,16 @@ pub fn decode_bytes_sync_or_async<'a>(
                 warning_message: None,
             });
         }
+
+        let text_slice = if looks_mostly_binary(raw_bytes)
+            && raw_bytes.len() > MAX_PLAIN_TEXT_SCAN_BYTES
+        {
+            &raw_bytes[..MAX_PLAIN_TEXT_SCAN_BYTES]
+        } else {
+            raw_bytes
+        };
+        let text = String::from_utf8_lossy(text_slice).into_owned();
+        let trimmed = text.trim_start_matches('\u{FEFF}').trim();
 
         // 3. NPVT / INPV
         if ext == "npvt"
@@ -1104,8 +1220,24 @@ pub fn decode_bytes_sync_or_async<'a>(
             }
         }
 
+        // Guard against running slow multi-pattern text/regex fallback on opaque binary ciphertext
+        if looks_mostly_binary(raw_bytes) {
+            return Err(DecryptionError::plain(
+                "داده باینری ناخوانا یا رمزگذاری‌شده است و کانفیگ متنی یافت نشد.",
+            ));
+        }
+        let fallback_text = if trimmed.len() > MAX_PLAIN_TEXT_SCAN_BYTES {
+            let mut end = MAX_PLAIN_TEXT_SCAN_BYTES;
+            while end > 0 && !trimmed.is_char_boundary(end) {
+                end -= 1;
+            }
+            &trimmed[..end]
+        } else {
+            trimmed
+        };
+
         let mut extracted_profiles = Vec::new();
-        if let Ok(parsed) = parse_subscription_text(trimmed, proxy_mode, custom_proxy_url).await {
+        if let Ok(parsed) = parse_subscription_text(fallback_text, proxy_mode, custom_proxy_url).await {
             if !parsed.profiles.is_empty() {
                 return Ok(DecryptedSourceOutput {
                     format_type: parsed.format_type,
@@ -1118,7 +1250,7 @@ pub fn decode_bytes_sync_or_async<'a>(
             }
         }
 
-        extracted_profiles.extend(extract_legacy_ssh_blocks(trimmed));
+        extracted_profiles.extend(extract_legacy_ssh_blocks(fallback_text));
         if !extracted_profiles.is_empty() {
             return Ok(DecryptedSourceOutput {
                 format_type: "ssh-text".to_string(),
@@ -1601,6 +1733,33 @@ pub async fn process_batch(
     options: &ProcessOptions,
     progress_cb: ProgressCallback,
 ) -> Result<ProcessBatchResult, String> {
+    process_batch_cancellable(
+        sources,
+        subscription_urls_text,
+        messy_text,
+        batch_passwords,
+        saved_passwords,
+        options,
+        progress_cb,
+        None,
+    )
+    .await
+}
+
+pub async fn process_batch_cancellable(
+    sources: &[SourceFileEntry],
+    subscription_urls_text: &str,
+    messy_text: &str,
+    batch_passwords: &[String],
+    saved_passwords: &[String],
+    options: &ProcessOptions,
+    progress_cb: ProgressCallback,
+    cancel_flag: CancelFlag,
+) -> Result<ProcessBatchResult, String> {
+    if is_cancelled(&cancel_flag) {
+        return Err("عملیات به درخواست کاربر متوقف شد.".to_string());
+    }
+
     let mut queue: Vec<SourceFileEntry> = sources.to_vec();
 
     for (idx, line) in subscription_urls_text.lines().enumerate() {
@@ -1651,8 +1810,12 @@ pub async fn process_batch(
     let mut all_dns_companions: Vec<DnsCompanionEntry> = Vec::new();
 
     for (idx, item) in queue.iter().enumerate() {
+        if is_cancelled(&cancel_flag) {
+            return Err("عملیات به درخواست کاربر متوقف شد.".to_string());
+        }
+
         if let Some(ref cb) = progress_cb {
-            let pct = (((idx + 1) * 80) / total_sources.max(1)).min(85) as u8;
+            let pct = (((idx + 1) * 78) / total_sources.max(1)).min(82) as u8;
             cb(ProgressEventPayload {
                 current: idx + 1,
                 total: total_sources,
@@ -1665,40 +1828,72 @@ pub async fn process_batch(
         let decode_res: Result<DecryptedSourceOutput, DecryptionError> = match item.kind {
             SourceKind::File => {
                 let raw_bytes = if let Some(ref raw_text) = item.raw_content {
-                    Ok(raw_text.as_bytes().to_vec())
+                    if raw_text.len() as u64 > MAX_SINGLE_SOURCE_BYTES {
+                        Err(DecryptionError::plain(
+                            "حجم فایل بیش از حد مجاز (۲۴ مگابایت) است.",
+                        ))
+                    } else {
+                        Ok(raw_text.as_bytes().to_vec())
+                    }
                 } else if let Some(ref path_str) = item.path {
-                    fs::read(path_str).map_err(|e| {
-                        DecryptionError::plain(format!("خطا در خواندن فایل از دیسک: {}", e))
+                    let p_owned = path_str.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let meta = fs::metadata(&p_owned).map_err(|e| {
+                            DecryptionError::plain(format!("خطا در دسترسی به فایل: {}", e))
+                        })?;
+                        if meta.len() > MAX_SINGLE_SOURCE_BYTES {
+                            return Err(DecryptionError::plain(
+                                "حجم فایل بیش از حد مجاز (۲۴ مگابایت) است.",
+                            ));
+                        }
+                        fs::read(&p_owned).map_err(|e| {
+                            DecryptionError::plain(format!("خطا در خواندن فایل از دیسک: {}", e))
+                        })
                     })
+                    .await
+                    .map_err(|e| DecryptionError::plain(format!("خطا در خواندن فایل: {}", e)))
+                    .and_then(|inner| inner)
                 } else {
                     Err(DecryptionError::plain("مسیر فایل نامعتبر است."))
                 };
                 match raw_bytes {
                     Ok(bytes) => {
-                        decode_bytes_sync_or_async(
-                            &bytes,
-                            &item.name,
-                            batch_passwords,
-                            saved_passwords,
-                            &options.proxy_mode,
-                            &options.custom_proxy_url,
-                            0,
+                        match tokio::time::timeout(
+                            Duration::from_secs(PER_SOURCE_TIMEOUT_SECS),
+                            decode_bytes_sync_or_async(
+                                &bytes,
+                                &item.name,
+                                batch_passwords,
+                                saved_passwords,
+                                &options.proxy_mode,
+                                &options.custom_proxy_url,
+                                0,
+                            ),
                         )
                         .await
+                        {
+                            Ok(res) => res,
+                            Err(_) => Err(DecryptionError::plain(
+                                "زمان مجاز پردازش این فایل به پایان رسید (تایم‌اوت ۲۵ ثانیه).",
+                            )),
+                        }
                     }
                     Err(e) => Err(e),
                 }
             }
             SourceKind::SubscriptionUrl | SourceKind::MessyText => {
                 let content = item.raw_content.as_deref().unwrap_or("");
-                match parse_subscription_text(
-                    content,
-                    &options.proxy_mode,
-                    &options.custom_proxy_url,
+                match tokio::time::timeout(
+                    Duration::from_secs(PER_SOURCE_TIMEOUT_SECS),
+                    parse_subscription_text(
+                        content,
+                        &options.proxy_mode,
+                        &options.custom_proxy_url,
+                    ),
                 )
                 .await
                 {
-                    Ok(parsed) => {
+                    Ok(Ok(parsed)) => {
                         if parsed.profiles.is_empty() {
                             Err(DecryptionError::plain(
                                 "هیچ کانفیگ معتبری در این ورودی یافت نشد.",
@@ -1714,10 +1909,17 @@ pub async fn process_batch(
                             })
                         }
                     }
-                    Err(e) => Err(e),
+                    Ok(Err(e)) => Err(e),
+                    Err(_) => Err(DecryptionError::plain(
+                        "زمان دانلود یا تحلیل این لینک به پایان رسید (تایم‌اوت ۲۵ ثانیه).",
+                    )),
                 }
             }
         };
+
+        if is_cancelled(&cancel_flag) {
+            return Err("عملیات به درخواست کاربر متوقف شد.".to_string());
+        }
 
         match decode_res {
             Ok(out) => {
@@ -1731,7 +1933,11 @@ pub async fn process_batch(
                 });
                 if options.move_decrypted_to_trash && item.kind == SourceKind::File {
                     if let Some(ref path_str) = item.path {
-                        if trash::delete(path_str).is_ok() {
+                        let p_del = path_str.clone();
+                        let deleted = tokio::task::spawn_blocking(move || trash::delete(&p_del).is_ok())
+                            .await
+                            .unwrap_or(false);
+                        if deleted {
                             moved_to_trash_count += 1;
                         }
                     }
@@ -1756,74 +1962,117 @@ pub async fn process_batch(
                 }
             }
         }
+
+        tokio::task::yield_now().await;
+    }
+
+    if is_cancelled(&cancel_flag) {
+        return Err("عملیات به درخواست کاربر متوقف شد.".to_string());
     }
 
     if let Some(ref cb) = progress_cb {
         cb(ProgressEventPayload {
             current: total_sources,
             total: total_sources,
-            percent: 90,
-            current_item: "تولید خروجی‌ها...".to_string(),
+            percent: 85,
+            current_item: "تولید خروجی‌ها و فایل‌های نهایی...".to_string(),
             stage: "building".to_string(),
         });
     }
 
-    let (mixed_valid, mix_stats) = filter_by_options(all_raw_profiles, options);
+    let options_owned = options.clone();
+    let cb_owned = progress_cb.clone();
+    let cancel_owned = cancel_flag.clone();
 
-    let out_dir_path = if options.output_dir.trim().is_empty() {
-        let ts = Utc::now().format("%Y%m%d_%H%M%S");
-        PathBuf::from("Outputs").join(format!("Run_{}", ts))
-    } else {
-        PathBuf::from(options.output_dir.trim())
-    };
-
-    let should_write_any = options.output_scope.mix_all || options.output_scope.per_source;
-    let mut written_files = Vec::new();
-
-    // Generate Mix_All (always compute previews, write only if mix_all enabled)
-    let previews = generate_bucket_outputs(
-        &out_dir_path.join("Mix_All"),
-        "Mix_All",
-        "mix_all",
-        &mixed_valid,
-        &all_dns_companions,
-        options,
-        should_write_any && options.output_scope.mix_all,
-        &mut written_files,
-    )?;
-
-    // Generate Per_Source
-    if options.output_scope.per_source {
-        let mut used_folder_names = HashSet::new();
-        for src in &per_source_results {
-            let (src_valid, _) = filter_by_options(src.profiles.clone(), options);
-            if src_valid.is_empty() && src.dns_companions.is_empty() {
-                continue;
-            }
-            let stem = Path::new(&src.source_name)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or(&src.source_name);
-            let base = sanitize_filename_part(stem);
-            let mut folder_name = base.clone();
-            let mut cnt = 2usize;
-            while !used_folder_names.insert(folder_name.to_lowercase()) {
-                folder_name = format!("{}_{}", base, cnt);
-                cnt += 1;
-            }
-            let rel = format!("Per_Source/{}", folder_name);
-            generate_bucket_outputs(
-                &out_dir_path.join("Per_Source").join(&folder_name),
-                &rel,
-                "per_source",
-                &src_valid,
-                &src.dns_companions,
-                options,
-                true,
-                &mut written_files,
-            )?;
+    let (mix_stats, written_files, previews, out_dir_path) = tokio::task::spawn_blocking(move || {
+        if is_cancelled(&cancel_owned) {
+            return Err("عملیات به درخواست کاربر متوقف شد.".to_string());
         }
-    }
+
+        let (mixed_valid, mix_stats) = filter_by_options(all_raw_profiles, &options_owned);
+
+        let out_dir_path = if options_owned.output_dir.trim().is_empty() {
+            let ts = Utc::now().format("%Y%m%d_%H%M%S");
+            PathBuf::from("Outputs").join(format!("Run_{}", ts))
+        } else {
+            PathBuf::from(options_owned.output_dir.trim())
+        };
+
+        let should_write_any = options_owned.output_scope.mix_all || options_owned.output_scope.per_source;
+        let mut written_files = Vec::new();
+
+        // Generate Mix_All (always compute previews, write only if mix_all enabled)
+        let previews = generate_bucket_outputs(
+            &out_dir_path.join("Mix_All"),
+            "Mix_All",
+            "mix_all",
+            &mixed_valid,
+            &all_dns_companions,
+            &options_owned,
+            should_write_any && options_owned.output_scope.mix_all,
+            &mut written_files,
+        )?;
+
+        // Generate Per_Source
+        if options_owned.output_scope.per_source {
+            let total_src_out = per_source_results.len().max(1);
+            let mut used_folder_names = HashSet::new();
+            let mut folder_counters: HashMap<String, usize> = HashMap::new();
+            for (s_idx, src) in per_source_results.iter().enumerate() {
+                if is_cancelled(&cancel_owned) {
+                    return Err("عملیات به درخواست کاربر متوقف شد.".to_string());
+                }
+                if s_idx % 20 == 0 {
+                    if let Some(ref cb) = cb_owned {
+                        let pct = (86 + ((s_idx * 13) / total_src_out)).min(99) as u8;
+                        cb(ProgressEventPayload {
+                            current: s_idx + 1,
+                            total: total_src_out,
+                            percent: pct,
+                            current_item: format!("ذخیره خروجی منبع: {}", src.source_name),
+                            stage: "writing".to_string(),
+                        });
+                    }
+                }
+                let (src_valid, _) = filter_by_options(src.profiles.clone(), &options_owned);
+                if src_valid.is_empty() && src.dns_companions.is_empty() {
+                    continue;
+                }
+                let stem = Path::new(&src.source_name)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&src.source_name);
+                let base = sanitize_filename_part(stem);
+                let mut folder_name = base.clone();
+                if !used_folder_names.insert(folder_name.to_lowercase()) {
+                    let next = folder_counters.entry(base.to_lowercase()).or_insert(2);
+                    loop {
+                        let cand = format!("{}_{}", base, *next);
+                        *next += 1;
+                        if used_folder_names.insert(cand.to_lowercase()) {
+                            folder_name = cand;
+                            break;
+                        }
+                    }
+                }
+                let rel = format!("Per_Source/{}", folder_name);
+                generate_bucket_outputs(
+                    &out_dir_path.join("Per_Source").join(&folder_name),
+                    &rel,
+                    "per_source",
+                    &src_valid,
+                    &src.dns_companions,
+                    &options_owned,
+                    true,
+                    &mut written_files,
+                )?;
+            }
+        }
+
+        Ok((mix_stats, written_files, previews, out_dir_path))
+    })
+    .await
+    .map_err(|e| format!("خطا در ذخیره فایل‌های خروجی: {}", e))??;
 
     if let Some(ref cb) = progress_cb {
         cb(ProgressEventPayload {

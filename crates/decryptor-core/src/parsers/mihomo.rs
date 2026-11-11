@@ -530,12 +530,50 @@ pub async fn parse_mihomo_yaml_async(
     custom_proxy_url: &str,
 ) -> Result<Vec<ProxyProfile>, DecryptionError> {
     let (mut profiles, provider_urls) = parse_mihomo_yaml(raw_text)?;
-    for p_url in provider_urls.into_iter().take(15) {
-        if let Ok(sub_txt) = fetch_text_with_fallback(&p_url, proxy_mode, custom_proxy_url, 6).await {
+    if !provider_urls.is_empty() {
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+        let mut set = tokio::task::JoinSet::new();
+        let mut seen_urls = std::collections::HashSet::new();
+        let pmode = proxy_mode.clone();
+        let cproxy = custom_proxy_url.to_string();
+
+        for p_url in provider_urls {
+            if seen_urls.len() >= 10 {
+                break;
+            }
+            if !seen_urls.insert(p_url.clone()) {
+                continue;
+            }
+            let sem_c = sem.clone();
+            let pm = pmode.clone();
+            let cp = cproxy.clone();
+            set.spawn(async move {
+                let Ok(_permit) = sem_c.acquire_owned().await else {
+                    return None;
+                };
+                fetch_text_with_fallback(&p_url, &pm, &cp, 6).await.ok()
+            });
+        }
+
+        let mut fetched_bodies = Vec::new();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(12), async {
+            while let Some(res) = set.join_next().await {
+                if let Ok(Some(sub_txt)) = res {
+                    fetched_bodies.push(sub_txt);
+                }
+            }
+        })
+        .await;
+
+        for sub_txt in fetched_bodies {
             if let Ok((sub_profiles, _)) = parse_mihomo_yaml(&sub_txt) {
                 profiles.extend(sub_profiles);
             } else if let Ok(parsed) = Box::pin(
-                crate::parsers::subscription::parse_subscription_text(&sub_txt, proxy_mode, custom_proxy_url),
+                crate::parsers::subscription::parse_subscription_text(
+                    &sub_txt,
+                    proxy_mode,
+                    custom_proxy_url,
+                ),
             )
             .await
             {

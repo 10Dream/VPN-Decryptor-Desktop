@@ -480,6 +480,29 @@ body {
   border-color: var(--md-outline);
 }
 
+.btn-danger-outline {
+  background: transparent;
+  color: var(--md-error);
+  border-color: var(--md-error);
+}
+
+.btn-danger-outline:hover:not(:disabled) {
+  background: var(--md-error-bg);
+}
+
+.run-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.progress-stats-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .btn-text,
 .text-btn {
   background: transparent;

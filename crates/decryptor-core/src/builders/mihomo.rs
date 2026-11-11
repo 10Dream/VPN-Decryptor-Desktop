@@ -5,7 +5,7 @@ use crate::sanitizer::{
     normalize_ec_private_key, remove_control_chars, DEFAULT_MASQUE_WARP_PUBKEY,
 };
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 static HEADER_BLOCK: &str = include_str!("../../assets/mihomo_header.txt");
 static GROUPS_TEMPLATE: &str = include_str!("../../assets/mihomo_groups.txt");
@@ -619,6 +619,7 @@ pub fn build_mihomo_config(
     let mut proxies_yaml = Vec::new();
     let mut proxy_names = Vec::new();
     let mut used_names = HashSet::new();
+    let mut name_counters: HashMap<String, usize> = HashMap::new();
 
     for (i, p) in profiles.iter().enumerate() {
         let base_name = remove_control_chars(&p.name);
@@ -628,10 +629,16 @@ pub fn build_mihomo_config(
             base_name
         };
         let mut unique_name = base_name.clone();
-        let mut cnt = 1usize;
-        while !used_names.insert(unique_name.clone()) {
-            unique_name = format!("{} #{}", base_name, cnt);
-            cnt += 1;
+        if !used_names.insert(unique_name.clone()) {
+            let next = name_counters.entry(base_name.clone()).or_insert(1);
+            loop {
+                let cand = format!("{} #{}", base_name, *next);
+                *next += 1;
+                if used_names.insert(cand.clone()) {
+                    unique_name = cand;
+                    break;
+                }
+            }
         }
         let mut p_copy = p.clone();
         p_copy.name = unique_name.clone();
