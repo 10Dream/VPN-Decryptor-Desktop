@@ -65,6 +65,76 @@ pub fn is_valid_ss_cipher(cipher: &str) -> bool {
     )
 }
 
+pub fn is_valid_singbox_ss_cipher(cipher: &str) -> bool {
+    matches!(
+        cipher,
+        "2022-blake3-aes-128-gcm"
+            | "2022-blake3-aes-256-gcm"
+            | "2022-blake3-chacha20-poly1305"
+            | "none"
+            | "aes-128-gcm"
+            | "aes-192-gcm"
+            | "aes-256-gcm"
+            | "chacha20-ietf-poly1305"
+            | "xchacha20-ietf-poly1305"
+            | "aes-128-ctr"
+            | "aes-192-ctr"
+            | "aes-256-ctr"
+            | "aes-128-cfb"
+            | "aes-192-cfb"
+            | "aes-256-cfb"
+            | "rc4-md5"
+            | "chacha20-ietf"
+            | "xchacha20"
+    )
+}
+
+pub fn is_valid_vless_encryption(enc: &str) -> bool {
+    let low = enc.trim().to_lowercase();
+    !low.is_empty() && low != "none" && (low.contains("mlkem") || low.matches('.').count() >= 2)
+}
+
+/// Validates and normalizes a Shadowsocks cipher + password pair across sanitizer, Sing-box, and Mihomo.
+/// Decodes URL-encoded `%3A` separators in 2022-blake3-* PSK keys and downgrades corrupted/invalid PSKs cleanly.
+pub fn normalize_ss_method_and_password(raw_method: &str, raw_password: &str) -> (String, String) {
+    let mut pw = raw_password.trim().to_string();
+    if pw.contains("%3A") || pw.contains("%3a") {
+        pw = pw.replace("%3A", ":").replace("%3a", ":");
+    }
+    let mut cipher = raw_method.to_lowercase().trim().to_string();
+    if cipher == "chacha20" {
+        cipher = "chacha20-ietf-poly1305".to_string();
+    }
+    if cipher.is_empty() || !is_valid_ss_cipher(&cipher) {
+        cipher = "aes-128-gcm".to_string();
+    }
+    if cipher.contains("2022-") {
+        let need_len = if cipher.contains("256") || cipher.contains("chacha20") {
+            32
+        } else {
+            16
+        };
+        let mut canon_parts = Vec::new();
+        let mut valid_2022 = !pw.is_empty();
+        for part in pw.split(':') {
+            if let Ok(raw) = base64_decode_safe(part) {
+                if raw.len() == need_len {
+                    canon_parts.push(base64_encode_std(&raw));
+                    continue;
+                }
+            }
+            valid_2022 = false;
+            break;
+        }
+        if valid_2022 && !canon_parts.is_empty() {
+            pw = canon_parts.join(":");
+        } else {
+            cipher = "aes-128-gcm".to_string();
+        }
+    }
+    (cipher, pw)
+}
+
 pub fn normalize_ec_private_key(priv_key_str: &str) -> String {
     let clean = priv_key_str.trim();
     if clean.starts_with("MIG") {
@@ -849,6 +919,9 @@ pub fn validate_and_sanitize_proxy(raw_p: &ProxyProfile) -> Option<ProxyProfile>
                 return None;
             }
             p.uuid = uuid;
+            if !is_valid_vless_encryption(&p.encryption) {
+                p.encryption = "none".to_string();
+            }
 
             if p.reality || p.security == "reality" {
                 let pbk = p.public_key.trim().to_string();
@@ -907,24 +980,21 @@ pub fn validate_and_sanitize_proxy(raw_p: &ProxyProfile) -> Option<ProxyProfile>
             if p.password.trim().is_empty() && !p.psk.trim().is_empty() {
                 p.password = p.psk.trim().to_string();
             }
-            p.password = p.password.trim().to_string();
-            if p.password.is_empty() {
+            let raw_pw = p.password.trim().to_string();
+            if raw_pw.is_empty() {
                 return None;
             }
-            let mut cipher = if !p.cipher.trim().is_empty() {
-                p.cipher.to_lowercase().trim().to_string()
+            let raw_cipher = if !p.cipher.trim().is_empty() {
+                p.cipher.as_str()
             } else if !p.method.trim().is_empty() {
-                p.method.to_lowercase().trim().to_string()
+                p.method.as_str()
             } else {
-                "aes-128-gcm".to_string()
+                "aes-128-gcm"
             };
-            if cipher == "chacha20" {
-                cipher = "chacha20-ietf-poly1305".to_string();
-            }
-            if !is_valid_ss_cipher(&cipher) {
-                cipher = "aes-128-gcm".to_string();
-            }
-            p.method = cipher;
+            let (cipher, clean_pw) = normalize_ss_method_and_password(raw_cipher, &raw_pw);
+            p.method = cipher.clone();
+            p.cipher = cipher;
+            p.password = clean_pw;
         }
         "shadowsocksr" | "ssr" => {
             p.protocol = "shadowsocksr".to_string();
@@ -974,7 +1044,8 @@ pub fn validate_and_sanitize_proxy(raw_p: &ProxyProfile) -> Option<ProxyProfile>
             } else {
                 DEFAULT_WARP_PUBKEY.to_string()
             };
-            p.public_key = pub_k;
+            p.public_key = pub_k.clone();
+            p.peer_public_key = pub_k;
             if p.local_address.trim().is_empty() {
                 p.local_address = "172.16.0.2/32".to_string();
             }
@@ -987,7 +1058,12 @@ pub fn validate_and_sanitize_proxy(raw_p: &ProxyProfile) -> Option<ProxyProfile>
             let has_user_pass = !p.username.trim().is_empty() && !p.password.trim().is_empty();
             let has_cert_key = p.cert.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
                 && p.key.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
-            if !has_user_pass && !has_cert_key {
+            let has_ovpn_cfg = p
+                .ovpn_config
+                .as_deref()
+                .map(|s| s.contains("remote "))
+                .unwrap_or(false);
+            if !has_user_pass && !has_cert_key && !has_ovpn_cfg {
                 return None;
             }
             if !has_cert_key {

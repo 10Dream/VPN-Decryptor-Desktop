@@ -234,4 +234,114 @@ Endpoint = 162.159.192.1:2408
         assert_eq!(decrypt_ehi_xor_field("", "EVZJNI"), "");
         assert_eq!(process_hc_credentials("", true), "");
     }
+
+    #[test]
+    fn test_mihomo_template_http_opts_and_encryption_guard() {
+        let http_vless = ProxyProfile {
+            protocol: "vless".into(),
+            name: "HttpNode".into(),
+            server: "1.1.1.1".into(),
+            server_port: 80,
+            uuid: "550e8400-e29b-41d4-a716-446655440000".into(),
+            encryption: "reality".into(), // bogus value that must not be emitted
+            network: "http".into(),
+            path: "/api".into(),
+            host: "cdn.test.org".into(),
+            ..Default::default()
+        };
+        let yaml = build_mihomo_config(&[http_vless], true, true, false);
+        assert_eq!(yaml.matches("\nproxies:\n").count(), 1);
+        assert!(!yaml.contains("__PROXY_SLOT__"));
+        assert!(!yaml.contains("__PROXIES_PLACEHOLDER__"));
+        assert!(yaml.contains("path: [\"/api\"]"));
+        assert!(yaml.contains("        Host:\n          - \"cdn.test.org\""));
+        assert!(!yaml.contains("encryption: \"reality\""));
+        assert!(yaml.contains("      - \"HttpNode\""));
+    }
+
+    #[test]
+    fn test_shadowsocks_2022_percent_colon_and_corrupt_cipher_cleanup() {
+        let ss_link = "ss://2022-blake3-aes-256-gcm:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=%3AAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=@8.8.4.4:8388#SS2022";
+        let prof = parse_uri_config(ss_link).expect("SS-2022 URI must parse");
+        assert!(!prof.password.contains("%3A"));
+        assert!(prof.password.contains(':'));
+
+        let corrupt_ss = ProxyProfile {
+            protocol: "shadowsocks".into(),
+            name: "CorruptCipher".into(),
+            server: "8.8.4.4".into(),
+            server_port: 8388,
+            method: "bad\u{0007}cipher".into(),
+            cipher: "bad\u{0007}cipher".into(),
+            password: "secret".into(),
+            ..Default::default()
+        };
+        let (valid, _) = filter_and_deduplicate_with_stats(&[prof, corrupt_ss], false, true);
+        assert_eq!(valid.len(), 2);
+        assert_eq!(valid[0].method, "2022-blake3-aes-256-gcm");
+        assert_eq!(valid[1].method, "aes-128-gcm");
+        assert_eq!(valid[1].cipher, "aes-128-gcm");
+
+        let sb = build_singbox_config(&valid, false, false, true);
+        assert!(!sb.contains("bad\u{0007}cipher"));
+        let mh = build_mihomo_config(&valid, false, false, true);
+        assert!(!mh.contains("bad\u{0007}cipher"));
+    }
+
+    #[test]
+    fn test_bpf_binary_header_with_non_utf8_prefix_before_json() {
+        use flate2::{write::GzEncoder, Compression};
+        use std::io::Write;
+        let payload = b"\x08singbox\x00\x00\xf6\x92]{\n  \"outbounds\": [{\"type\":\"vless\",\"tag\":\"BpfNode\",\"server\":\"8.8.8.8\",\"server_port\":443,\"uuid\":\"550e8400-e29b-41d4-a716-446655440000\"}]\n}\n";
+        let mut gz = GzEncoder::new(Vec::new(), Compression::default());
+        gz.write_all(payload).unwrap();
+        let mut raw = vec![0x03u8, 0x01u8];
+        raw.extend_from_slice(&gz.finish().unwrap());
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let dec = rt
+            .block_on(crate::pipeline::decode_bytes_sync_or_async(
+                &raw,
+                "sample.bpf",
+                &[],
+                &[],
+                &ProxyMode::DirectOnly,
+                "",
+                0,
+            ))
+            .expect("BPF with binary prefix before JSON must decode");
+        assert_eq!(dec.profiles.len(), 1);
+        assert_eq!(dec.profiles[0].server, "8.8.8.8");
+
+        let legacy_ssh = "[SSH Server 1: Test]\nHost: 188.213.26.23\nPort: 22\nUsername: demo\nPassword: pass\n";
+        let dec_ssh = rt
+            .block_on(crate::pipeline::decode_bytes_sync_or_async(
+                legacy_ssh.as_bytes(),
+                "Decrypted_All_SSH.txt",
+                &[],
+                &[],
+                &ProxyMode::DirectOnly,
+                "",
+                0,
+            ))
+            .expect("Legacy SSH text dump must decode");
+        assert_eq!(dec_ssh.profiles.len(), 1);
+        assert_eq!(dec_ssh.profiles[0].protocol, "ssh");
+
+        let ovpn_raw = "client\ndev tun\nproto tcp\nremote ovpn1.example.com 443\nremote ovpn2.example.com 1194\n<ca>\nCERT\n</ca>\n";
+        let dec_ovpn = rt
+            .block_on(crate::pipeline::decode_bytes_sync_or_async(
+                ovpn_raw.as_bytes(),
+                "test.ovpn",
+                &[],
+                &[],
+                &ProxyMode::DirectOnly,
+                "",
+                0,
+            ))
+            .expect("Multi-remote OpenVPN must decode");
+        assert_eq!(dec_ovpn.profiles.len(), 2);
+        let (valid_ovpn, _) = filter_and_deduplicate_with_stats(&dec_ovpn.profiles, false, true);
+        assert_eq!(valid_ovpn.len(), 2);
+    }
 }

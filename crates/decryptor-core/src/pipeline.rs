@@ -382,17 +382,185 @@ where
         .unwrap_or_else(|| DecryptionError::plain("رمزگشایی فایل ناموفق بود.")))
 }
 
-fn extract_ovpn_remote(ovpn_text: &str) -> (String, u16) {
-    let re = Regex::new(r"(?im)^\s*remote\s+([^\s]+)(?:\s+(\d+))?").unwrap();
-    if let Some(cap) = re.captures(ovpn_text) {
-        let host = cap[1].trim().to_string();
-        let port = cap
-            .get(2)
-            .and_then(|m| m.as_str().parse::<u16>().ok())
-            .unwrap_or(1194);
-        return (host, port);
+fn extract_ovpn_profiles(ovpn_text: &str, file_name: &str) -> Vec<ProxyProfile> {
+    let re_remote = Regex::new(r"(?im)^\s*remote\s+([^\s]+)(?:\s+(\d+))?").unwrap();
+    let re_proto = Regex::new(r"(?im)^\s*proto\s+([^\s]+)").unwrap();
+    let extract_tag = |tag: &str| -> Option<String> {
+        let re = Regex::new(&format!(r"(?is)<{}>\s*([\s\S]*?)\s*</{}>", tag, tag)).ok()?;
+        re.captures(ovpn_text)
+            .map(|c| c[1].trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+
+    let proto = re_proto
+        .captures(ovpn_text)
+        .map(|c| c[1].trim().to_lowercase())
+        .unwrap_or_else(|| "udp".to_string());
+    let ca = extract_tag("ca");
+    let cert = extract_tag("cert");
+    let key = extract_tag("key");
+    let (username, password) = extract_tag("auth-user-pass")
+        .map(|blk| {
+            let mut ls = blk.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+            (ls.next().unwrap_or_default(), ls.next().unwrap_or_default())
+        })
+        .unwrap_or_default();
+
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("OpenVPN")
+        .to_string();
+
+    let remotes: Vec<(String, u16)> = re_remote
+        .captures_iter(ovpn_text)
+        .map(|cap| {
+            let host = cap[1].trim().to_string();
+            let port = cap.get(2).and_then(|m| m.as_str().parse::<u16>().ok()).unwrap_or(1194);
+            (host, port)
+        })
+        .collect();
+
+    if remotes.is_empty() {
+        return Vec::new();
     }
-    ("openvpn-server".to_string(), 1194)
+
+    let total = remotes.len();
+    remotes
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (server, port))| ProxyProfile {
+            protocol: "openvpn".to_string(),
+            name: if total > 1 {
+                format!("{}-{}", stem, idx + 1)
+            } else {
+                stem.clone()
+            },
+            server,
+            server_port: port,
+            network: proto.clone(),
+            username: username.clone(),
+            password: password.clone(),
+            ca: ca.clone(),
+            cert: cert.clone(),
+            key: key.clone(),
+            ovpn_config: Some(ovpn_text.trim().to_string()),
+            ..Default::default()
+        })
+        .collect()
+}
+
+fn extract_legacy_ssh_blocks(text: &str) -> Vec<ProxyProfile> {
+    if !text.contains("[SSH Server") && !text.contains("سرور SSH:") {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut cur_name = String::new();
+    let mut cur_host = String::new();
+    let mut cur_port = 22u16;
+    let mut cur_user = String::new();
+    let mut cur_pass = String::new();
+    let mut cur_sni = String::new();
+    let mut cur_payload = String::new();
+
+    let flush = |out: &mut Vec<ProxyProfile>,
+                 name: &mut String,
+                 host: &mut String,
+                 port: &mut u16,
+                 user: &mut String,
+                 pass: &mut String,
+                 sni: &mut String,
+                 payload: &mut String| {
+        if !host.is_empty() && !user.is_empty() {
+            out.push(ProxyProfile {
+                protocol: "ssh".to_string(),
+                name: if name.is_empty() {
+                    format!("SSH-{}", host)
+                } else {
+                    name.clone()
+                },
+                server: host.clone(),
+                server_port: *port,
+                username: user.clone(),
+                password: pass.clone(),
+                sni: sni.clone(),
+                payload: if payload.is_empty() {
+                    None
+                } else {
+                    Some(payload.clone())
+                },
+                ..Default::default()
+            });
+        }
+        name.clear();
+        host.clear();
+        *port = 22;
+        user.clear();
+        pass.clear();
+        sni.clear();
+        payload.clear();
+    };
+
+    for raw in text.lines() {
+        let l = raw.trim();
+        if l.starts_with("[SSH Server") || l.starts_with("--- ") {
+            flush(
+                &mut out,
+                &mut cur_name,
+                &mut cur_host,
+                &mut cur_port,
+                &mut cur_user,
+                &mut cur_pass,
+                &mut cur_sni,
+                &mut cur_payload,
+            );
+            if l.starts_with("[SSH Server") {
+                cur_name = l
+                    .split_once(':')
+                    .map(|(_, r)| r.trim_end_matches(']').trim().to_string())
+                    .unwrap_or_else(|| "SSH".to_string());
+            }
+        } else if let Some(v) = l.strip_prefix("Host:") {
+            cur_host = v.trim().to_string();
+        } else if let Some(v) = l.strip_prefix("Port:") {
+            cur_port = v.trim().parse::<u16>().unwrap_or(22);
+        } else if let Some(v) = l.strip_prefix("Username:") {
+            cur_user = v.trim().to_string();
+        } else if let Some(v) = l.strip_prefix("Password:") {
+            cur_pass = v.trim().to_string();
+        } else if let Some(v) = l.strip_prefix("SNI:") {
+            cur_sni = v.trim().to_string();
+        } else if let Some(v) = l.strip_prefix("Payload:") {
+            cur_payload = v.trim().to_string();
+        }
+    }
+    flush(
+        &mut out,
+        &mut cur_name,
+        &mut cur_host,
+        &mut cur_port,
+        &mut cur_user,
+        &mut cur_pass,
+        &mut cur_sni,
+        &mut cur_payload,
+    );
+    out
+}
+
+fn truncate_preview_text(raw: String, max_bytes: usize) -> String {
+    if raw.len() <= max_bytes {
+        return raw;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !raw.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "# ⚠️ نمایش خلاصه پیش‌نمایش ({} کیلوبایت از کل {:.2} مگابایت) — فایل کامل بدون هیچ حذفی در مسیر خروجی ذخیره شده است.\n\n{}",
+        end / 1024,
+        raw.len() as f64 / (1024.0 * 1024.0),
+        &raw[..end]
+    )
 }
 
 async fn decode_http_custom_full(
@@ -481,7 +649,6 @@ async fn decode_http_custom_full(
         .get("ovpnConfig")
         .filter(|s| !s.trim().is_empty() && s.contains("remote "))
     {
-        let (srv, port) = extract_ovpn_remote(ovpn_cfg);
         let (user, pass) = if let Some(up) = decoded.fields.get("ovpnUserAndPass") {
             let dec_up = process_hc_credentials(up, false);
             if let Some(c) = dec_up.find(':') {
@@ -492,16 +659,16 @@ async fn decode_http_custom_full(
         } else {
             (String::new(), String::new())
         };
-        profiles.push(ProxyProfile {
-            protocol: "openvpn".to_string(),
-            name: format!("{}-OpenVPN", cfg_name),
-            server: srv,
-            server_port: port,
-            username: user,
-            password: pass,
-            ovpn_config: Some(ovpn_cfg.clone()),
-            ..Default::default()
-        });
+        let mut ovpns = extract_ovpn_profiles(ovpn_cfg, &format!("{}-OpenVPN.ovpn", cfg_name));
+        for ov in &mut ovpns {
+            if ov.username.is_empty() && !user.is_empty() {
+                ov.username = user.clone();
+            }
+            if ov.password.is_empty() && !pass.is_empty() {
+                ov.password = pass.clone();
+            }
+        }
+        profiles.extend(ovpns);
     }
 
     let expiry_raw = decoded.fields.get("expiryTime").cloned();
@@ -697,8 +864,8 @@ pub fn decode_bytes_sync_or_async<'a>(
             });
         }
 
-        // 4. DarkTunnel (.dark / darktunnel://)
-        if ext == "dark" || trimmed.starts_with("darktunnel://") {
+        // 4. DarkTunnel (.dark / .darktunnel / darktunnel://)
+        if ext == "dark" || ext == "darktunnel" || trimmed.starts_with("darktunnel://") {
             let decoded = decrypt_dark(trimmed)?;
             let exp = check_expiration_json(&decoded.parsed);
             let mut profiles = decoded.profiles;
@@ -784,8 +951,9 @@ pub fn decode_bytes_sync_or_async<'a>(
                 .await;
         }
 
-        // 10. HTTP Injector (.ehi)
-        if ext == "ehi" {
+        // 10. HTTP Injector (.ehi by ext or magic \x00\x03ehi)
+        let is_ehi_magic = raw_bytes.len() >= 5 && raw_bytes[0..5] == [0x00, 0x03, 0x65, 0x68, 0x69];
+        if ext == "ehi" || is_ehi_magic {
             let decoded = decrypt_ehi(raw_bytes)?;
             let mut profiles = Vec::new();
             for raw_ob in &decoded.raw_profiles_json {
@@ -806,26 +974,31 @@ pub fn decode_bytes_sync_or_async<'a>(
             });
         }
 
-        // 11. BPF (.bpf gzipped payload)
-        if ext == "bpf" {
-            let gz_offset = (0..raw_bytes.len().saturating_sub(2).min(12))
-                .find(|&i| raw_bytes[i] == 0x1f && raw_bytes[i + 1] == 0x8b);
+        // 11. BPF (.bpf gzipped payload with optional binary prefix before `{...}`)
+        let gz_offset = (0..raw_bytes.len().saturating_sub(2).min(12))
+            .find(|&i| raw_bytes[i] == 0x1f && raw_bytes[i + 1] == 0x8b);
+        if ext == "bpf" || (ext.is_empty() && gz_offset.is_some()) {
             if let Some(off) = gz_offset {
                 let mut decoder = GzDecoder::new(&raw_bytes[off..]);
-                let mut decompressed = String::new();
-                if decoder.read_to_string(&mut decompressed).is_ok()
-                    && !decompressed.trim().is_empty()
-                {
-                    return decode_bytes_sync_or_async(
-                        decompressed.as_bytes(),
-                        &format!("{}.json", file_name),
-                        batch_passwords,
-                        saved_passwords,
-                        proxy_mode,
-                        custom_proxy_url,
-                        depth + 1,
-                    )
-                    .await;
+                let mut raw_dec = Vec::new();
+                let _ = decoder.read_to_end(&mut raw_dec);
+                if !raw_dec.is_empty() {
+                    let lossy = String::from_utf8_lossy(&raw_dec);
+                    if let (Some(j_start), Some(j_end)) = (lossy.find('{'), lossy.rfind('}')) {
+                        if j_end > j_start {
+                            let json_slice = &lossy[j_start..=j_end];
+                            return decode_bytes_sync_or_async(
+                                json_slice.as_bytes(),
+                                &format!("{}.json", file_name),
+                                batch_passwords,
+                                saved_passwords,
+                                proxy_mode,
+                                custom_proxy_url,
+                                depth + 1,
+                            )
+                            .await;
+                        }
+                    }
                 }
             }
             return Err(DecryptionError::plain("رمزگشایی فایل BPF ناموفق بود."));
@@ -833,23 +1006,16 @@ pub fn decode_bytes_sync_or_async<'a>(
 
         // 12. OpenVPN (.ovpn)
         if ext == "ovpn" || (trimmed.contains("remote ") && trimmed.contains("<ca>")) {
-            let (srv, port) = extract_ovpn_remote(trimmed);
-            let name = Path::new(file_name)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("OpenVPN")
-                .to_string();
+            let profiles = extract_ovpn_profiles(trimmed, file_name);
+            if profiles.is_empty() {
+                return Err(DecryptionError::plain(
+                    "فایل OpenVPN فاقد دستور remote معتبر است.",
+                ));
+            }
             return Ok(DecryptedSourceOutput {
                 format_type: "openvpn".to_string(),
                 source_name: file_name.to_string(),
-                profiles: vec![ProxyProfile {
-                    protocol: "openvpn".to_string(),
-                    name,
-                    server: srv,
-                    server_port: port,
-                    ovpn_config: Some(trimmed.to_string()),
-                    ..Default::default()
-                }],
+                profiles,
                 dns_companions: Vec::new(),
                 expiry_info: None,
                 warning_message: None,
@@ -916,22 +1082,57 @@ pub fn decode_bytes_sync_or_async<'a>(
             }
         }
 
-        // 16. Subscription / Generic Text / Messy Links fallback
-        let parsed = parse_subscription_text(trimmed, proxy_mode, custom_proxy_url).await?;
-        if parsed.profiles.is_empty() {
-            return Err(DecryptionError::plain(
-                "هیچ کانفیگ معتبری از این فایل استخراج نشد.",
-            ));
+        // 16. Subscription / SlipNet / Legacy SSH / Generic Text fallback
+        if trimmed.starts_with("slipnet://")
+            || trimmed.starts_with("slipnet-enc://")
+            || trimmed.starts_with("slipnet-bundle-enc://")
+        {
+            let decoded = decrypt_slipnet(trimmed);
+            let exp_raw = decoded.fields.get("Expiration Date").cloned();
+            let exp = check_expiration_str(exp_raw.as_deref());
+            let mut profiles = decoded.profiles;
+            attach_expiry_to_profiles(&mut profiles, &exp, exp_raw.as_deref());
+            if !profiles.is_empty() || !decoded.dns_companions.is_empty() {
+                return Ok(DecryptedSourceOutput {
+                    format_type: format!("slipnet-{}", decoded.proto),
+                    source_name: file_name.to_string(),
+                    profiles,
+                    dns_companions: decoded.dns_companions,
+                    expiry_info: if exp.has_expiry { Some(exp) } else { None },
+                    warning_message: None,
+                });
+            }
         }
 
-        Ok(DecryptedSourceOutput {
-            format_type: parsed.format_type,
-            source_name: file_name.to_string(),
-            profiles: parsed.profiles,
-            dns_companions: Vec::new(),
-            expiry_info: None,
-            warning_message: None,
-        })
+        let mut extracted_profiles = Vec::new();
+        if let Ok(parsed) = parse_subscription_text(trimmed, proxy_mode, custom_proxy_url).await {
+            if !parsed.profiles.is_empty() {
+                return Ok(DecryptedSourceOutput {
+                    format_type: parsed.format_type,
+                    source_name: file_name.to_string(),
+                    profiles: parsed.profiles,
+                    dns_companions: Vec::new(),
+                    expiry_info: None,
+                    warning_message: None,
+                });
+            }
+        }
+
+        extracted_profiles.extend(extract_legacy_ssh_blocks(trimmed));
+        if !extracted_profiles.is_empty() {
+            return Ok(DecryptedSourceOutput {
+                format_type: "ssh-text".to_string(),
+                source_name: file_name.to_string(),
+                profiles: extracted_profiles,
+                dns_companions: Vec::new(),
+                expiry_info: None,
+                warning_message: None,
+            });
+        }
+
+        Err(DecryptionError::plain(
+            "هیچ کانفیگ معتبری از این فایل استخراج نشد.",
+        ))
     })
 }
 
@@ -1108,10 +1309,11 @@ fn generate_bucket_outputs(
         String::new()
     };
 
-    previews.xray = xray_txt.clone();
-    previews.xray_base64 = xray_b64.clone();
-    previews.singbox = sb_json.clone();
-    previews.mihomo = mihomo_yaml.clone();
+    const PREVIEW_MAX_BYTES: usize = 120_000;
+    previews.xray = truncate_preview_text(xray_txt.clone(), PREVIEW_MAX_BYTES);
+    previews.xray_base64 = truncate_preview_text(xray_b64.clone(), PREVIEW_MAX_BYTES);
+    previews.singbox = truncate_preview_text(sb_json.clone(), PREVIEW_MAX_BYTES);
+    previews.mihomo = truncate_preview_text(mihomo_yaml.clone(), PREVIEW_MAX_BYTES);
 
     let ovpn_str: String = ovpn_profiles
         .iter()
@@ -1127,18 +1329,25 @@ fn generate_bucket_outputs(
     };
 
     if !ovpn_str.is_empty() {
-        previews.companions.insert("OpenVPN".into(), ovpn_str.clone());
-    }
-    if !ssh_str.is_empty() {
-        previews.companions.insert("SSH".into(), ssh_str.clone());
-    }
-    if !dns_str.is_empty() {
-        previews.companions.insert("DNS".into(), dns_str.clone());
-    }
-    if !mihomo_excl_str.is_empty() {
         previews
             .companions
-            .insert("Mihomo Exclusive".into(), mihomo_excl_str.clone());
+            .insert("OpenVPN".into(), truncate_preview_text(ovpn_str.clone(), PREVIEW_MAX_BYTES));
+    }
+    if !ssh_str.is_empty() {
+        previews
+            .companions
+            .insert("SSH".into(), truncate_preview_text(ssh_str.clone(), PREVIEW_MAX_BYTES));
+    }
+    if !dns_str.is_empty() {
+        previews
+            .companions
+            .insert("DNS".into(), truncate_preview_text(dns_str.clone(), PREVIEW_MAX_BYTES));
+    }
+    if !mihomo_excl_str.is_empty() {
+        previews.companions.insert(
+            "Mihomo Exclusive".into(),
+            truncate_preview_text(mihomo_excl_str.clone(), PREVIEW_MAX_BYTES),
+        );
     }
 
     if !write_to_disk {
@@ -1248,19 +1457,21 @@ fn generate_bucket_outputs(
                     written,
                 )?;
             }
-            if options.output_formats.mihomo {
+            if options.output_formats.mihomo
+                && plist
+                    .iter()
+                    .any(|p| crate::builders::mihomo::format_proxy_yaml(p).is_some())
+            {
                 let p_mh = build_mihomo_config(&plist, false, false, true);
-                if p_mh.contains("- name:") && !p_mh.contains("  - name: \"DIRECT\"") {
-                    write_text_file(
-                        &proto_dir,
-                        &format!("{}_mihomo.yaml", proto_name),
-                        &proto_rel,
-                        category,
-                        "mihomo",
-                        &p_mh,
-                        written,
-                    )?;
-                }
+                write_text_file(
+                    &proto_dir,
+                    &format!("{}_mihomo.yaml", proto_name),
+                    &proto_rel,
+                    category,
+                    "mihomo",
+                    &p_mh,
+                    written,
+                )?;
             }
         }
     }

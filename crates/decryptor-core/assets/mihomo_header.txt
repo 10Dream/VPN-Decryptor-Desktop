@@ -552,5 +552,3 @@ rule-providers:
     url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/generated/private.yaml"
     interval: 86400
     path: "./ruleset/private.yaml"
-
-proxies:
