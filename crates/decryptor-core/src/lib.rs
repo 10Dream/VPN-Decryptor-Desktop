@@ -84,7 +84,7 @@ mod tests {
             "containers": [{
                 "container": "amnezia-awg",
                 "awg": {
-                    "last_config": "[Interface]\nPrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nAddress = 10.8.0.2/32\nJc = 4\nJmin = 40\nJmax = 70\nS1 = 15\nS2 = 25\n[Peer]\nPublicKey = BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=\nEndpoint = 185.10.20.30:51820\n"
+                    "last_config": "[Interface]\nPrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nAddress = 10.8.0.2/32\nJc = 4\nJmin = 40\nJmax = 70\nS1 = 15\nS2 = 25\n[Peer]\nPublicKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\nEndpoint = 185.10.20.30:51820\n"
                 }
             }],
             "description": "AmneziaTest"
@@ -173,13 +173,13 @@ mod tests {
     fn test_wireguard_mihomo_singbox_roundtrip() {
         let wg_conf = r#"
 [Interface]
-PrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+PrivateKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=
 Address = 10.7.0.2/32
 DNS = 1.1.1.1
 MTU = 1280
 
 [Peer]
-PublicKey = BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+PublicKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
 Endpoint = 162.159.192.1:2408
 "#;
         let prof = parse_wireguard_conf(wg_conf, "warp.conf").expect("WG conf must parse");
