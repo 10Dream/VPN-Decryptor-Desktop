@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <script src="theme-init.js"></script>
+  <title>رمزگشا و تبدیل‌گر کانفیگ‌های VPN</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="app-bar">
+    <div class="app-bar-brand">
+      <div class="brand-badge" aria-hidden="true">VPN</div>
+      <div>
+        <h1 class="app-title">رمزگشا و تبدیل‌گر کانفیگ‌های VPN</h1>
+        <p class="app-subtitle">پردازش آفلاین و پرسرعت تمامی فرمت‌ها • پشتیبانی کامل ۲۶ پروتکل</p>
+      </div>
+    </div>
+
+    <div class="app-bar-actions">
+      <button type="button" id="btn-proxy-status" class="tonal-chip" title="بررسی وضعیت پروکسی یا VPN سیستم">
+        <span class="status-dot" id="proxy-dot" aria-hidden="true"></span>
+        <span id="proxy-status-label">در حال بررسی شبکه...</span>
+      </button>
+
+      <button type="button" id="btn-open-vault" class="btn btn-tonal">
+        <span>مخزن رمزها</span>
+        <span class="count-pill" id="vault-count-badge">0</span>
+      </button>
+
+      <div class="theme-segmented" role="group" aria-label="حالت نمایش پوسته">
+        <button type="button" class="seg-btn" data-theme="system" aria-pressed="true">سیستم</button>
+        <button type="button" class="seg-btn" data-theme="light" aria-pressed="false">روشن</button>
+        <button type="button" class="seg-btn" data-theme="dark" aria-pressed="false">تیره</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-shell">
+    <!-- SECTION 1: INPUT SOURCES -->
+    <section class="m3-card" aria-labelledby="inputs-heading">
+      <div class="card-header-row">
+        <div>
+          <h2 id="inputs-heading" class="card-title">۱. انتخاب منابع ورودی</h2>
+          <p class="card-desc">پوشه همگام‌سازی، فایل‌های تکی یا چندتایی، کشیدن و رها کردن (Drag &amp; Drop)، لینک اشتراک یا متن به‌هم‌ریخته</p>
+        </div>
+        <div class="queue-summary-pill">
+          <span>منابع آماده پردازش:</span>
+          <strong id="queued-count-label">0 مورد</strong>
+          <button type="button" id="btn-clear-queue" class="text-btn danger-text" hidden>پاک کردن همه</button>
+        </div>
+      </div>
+
+      <div class="tablist" role="tablist" aria-label="روش‌های ورود کانفیگ" data-tab-group="inputs">
+        <button type="button" role="tab" id="tab-folder" aria-selected="true" aria-controls="panel-folder" tabindex="0">
+          پوشه و همگام‌سازی
+        </button>
+        <button type="button" role="tab" id="tab-files" aria-selected="false" aria-controls="panel-files" tabindex="-1">
+          فایل‌ها و کشیدن و رها کردن
+        </button>
+        <button type="button" role="tab" id="tab-subs" aria-selected="false" aria-controls="panel-subs" tabindex="-1">
+          لینک‌های اشتراک (خط‌به‌خط)
+        </button>
+        <button type="button" role="tab" id="tab-messy" aria-selected="false" aria-controls="panel-messy" tabindex="-1">
+          متن به‌هم‌ریخته
+        </button>
+      </div>
+
+      <!-- TAB 1: FOLDER SYNC -->
+      <div role="tabpanel" id="panel-folder" aria-labelledby="tab-folder" class="tab-panel">
+        <div class="field-row">
+          <div class="field-grow">
+            <label for="input-folder-path" class="field-label">مسیر پوشه ورودی</label>
+            <input type="text" id="input-folder-path" class="m3-input ltr-input" placeholder="مثال: G:\Downloads\VPN_Configs" aria-describedby="folder-help-text">
+          </div>
+          <div class="field-actions">
+            <button type="button" id="btn-pick-folder" class="btn btn-outlined">انتخاب پوشه...</button>
+          </div>
+        </div>
+        <p id="folder-help-text" class="field-hint">
+          با زدن «بررسی مجدد فایل‌های جدید»، فایل‌هایی که قبلاً با موفقیت وارد شده‌اند نادیده گرفته می‌شوند و فقط فایل‌های تازه اضافه می‌شوند.
+        </p>
+
+        <div class="controls-strip">
+          <label class="m3-checkbox">
+            <input type="checkbox" id="chk-subfolders">
+            <span>بررسی زیرپوشه‌ها (Subfolders)</span>
+          </label>
+
+          <label class="m3-checkbox warning-checkbox">
+            <input type="checkbox" id="chk-move-trash">
+            <span>انتقال فایل‌های پردازش‌شده به سطل زباله ویندوز (Recycle Bin) پس از رمزگشایی موفق</span>
+          </label>
+        </div>
+
+        <div class="action-row">
+          <button type="button" id="btn-scan-all" class="btn btn-tonal">اسکن کامل پوشه</button>
+          <button type="button" id="btn-scan-new" class="btn btn-filled-secondary">بررسی مجدد (فقط فایل‌های جدید)</button>
+          <button type="button" id="btn-reset-folder-history" class="btn btn-text danger-text">پاک کردن سابقه اسکن این پوشه</button>
+        </div>
+
+        <div id="folder-scan-report" class="info-banner" hidden aria-live="polite"></div>
+      </div>
+
+      <!-- TAB 2: FILES & DRAG DROP -->
+      <div role="tabpanel" id="panel-files" aria-labelledby="tab-files" class="tab-panel" hidden>
+        <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="فایل‌ها یا پوشه‌ها را اینجا بکشید و رها کنید یا کلیک کنید">
+          <div class="drop-icon" aria-hidden="true">📂</div>
+          <p class="drop-title">فایل‌ها، پوشه‌ها یا آرشیو ZIP را اینجا بکشید و رها کنید</p>
+          <p class="drop-subtitle">پشتیبانی از ۲۱ پسوند: .npvt .npvs .ehi .hc .dark .hat .nm .slip .ssc .bpf .ovpn .inpv .conf .yaml .json .txt .zip</p>
+          <button type="button" id="btn-pick-files" class="btn btn-tonal">انتخاب تکی یا چندتایی فایل‌ها...</button>
+        </div>
+      </div>
+
+      <!-- TAB 3: SUBSCRIPTION URLS -->
+      <div role="tabpanel" id="panel-subs" aria-labelledby="tab-subs" class="tab-panel" hidden>
+        <div class="field-group">
+          <label for="textarea-subs" class="field-label">لینک‌های اشتراک (هر لینک در یک خط مجزا)</label>
+          <textarea id="textarea-subs" class="m3-textarea ltr-input" rows="5" placeholder="https://raw.githubusercontent.com/.../sub.txt&#10;https://github.com/.../blob/main/config.yaml&#10;https://drive.google.com/file/d/.../view" aria-describedby="subs-hint"></textarea>
+          <p id="subs-hint" class="field-hint">لینک‌های GitHub و Google Drive به‌صورت خودکار به آدرس مستقیم دانلود تبدیل می‌شوند.</p>
+        </div>
+
+        <div class="field-row">
+          <div>
+            <label for="select-proxy-mode" class="field-label">نحوه اتصال برای دریافت لینک اشتراک</label>
+            <select id="select-proxy-mode" class="m3-select">
+              <option value="autoDetect">تشخیص خودکار فیلترشکن سیستم (پیشنهادی - پورت ۷۸۹۰ و غیره)</option>
+              <option value="systemOrDirect">پروکسی ویندوز یا اتصال مستقیم</option>
+              <option value="custom">پروکسی دستی (Custom)</option>
+              <option value="directOnly">اتصال مستقیم بدون پروکسی</option>
+            </select>
+          </div>
+          <div id="custom-proxy-wrap" hidden>
+            <label for="input-custom-proxy" class="field-label">آدرس پروکسی دستی</label>
+            <input type="text" id="input-custom-proxy" class="m3-input ltr-input" placeholder="http://127.0.0.1:7890">
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 4: MESSY TEXT -->
+      <div role="tabpanel" id="panel-messy" aria-labelledby="tab-messy" class="tab-panel" hidden>
+        <div class="field-group">
+          <label for="textarea-messy" class="field-label">متن خام، لینک‌های چسبیده، Base64، یا کانفیگ Clash / Sing-box / Xray / Amnezia vpn://</label>
+          <textarea id="textarea-messy" class="m3-textarea ltr-input" rows="6" placeholder="vless://...trojan://...&#10;یا متن کدگذاری‌شده Base64 یا لینک پروکسی تلگرام t.me/socks?..."></textarea>
+        </div>
+      </div>
+
+      <!-- QUEUED FILE LIST & QUICK PASSWORD -->
+      <div id="queued-list-container" class="queued-box" hidden>
+        <div class="queued-header">
+          <span class="field-label">فایل‌های آماده در صف:</span>
+          <span id="queued-meta" class="muted-text"></span>
+        </div>
+        <ul id="queued-files-list" class="queued-list"></ul>
+      </div>
+
+      <div class="quick-pass-row">
+        <div class="field-grow">
+          <label for="input-batch-pass" class="field-label">رمز عبور دسته‌ای موقت (اختیاری — در کنار لیست رمزهای ذخیره‌شده تست می‌شود)</label>
+          <input type="text" id="input-batch-pass" class="m3-input ltr-input" placeholder="در صورت نیاز رمز فایل‌های قفل را اینجا بنویسید یا از مخزن رمزها استفاده کنید...">
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: TWO-COLUMN OPTIONS -->
+    <div class="two-col-grid">
+      <!-- LEFT CARD: FILTERS & 26 PROTOCOLS -->
+      <section class="m3-card" aria-labelledby="filters-heading">
+        <h2 id="filters-heading" class="card-title">۲. فیلترها و انتخاب پروتکل‌ها</h2>
+        <div class="switch-list">
+          <label class="m3-checkbox">
+            <input type="checkbox" id="chk-filter-dups" checked>
+            <span>حذف کانفیگ‌های تکراری (بر اساس مشخصات فنی اتصال)</span>
+          </label>
+          <label class="m3-checkbox">
+            <input type="checkbox" id="chk-filter-broken" checked>
+            <span>حذف و اصلاح خودکار کانفیگ‌های خراب یا جعلی</span>
+          </label>
+          <label class="m3-checkbox">
+            <input type="checkbox" id="chk-ignore-expired" checked>
+            <span>نادیده گرفتن کانفیگ‌های منقضی‌شده</span>
+          </label>
+          <div class="limit-row">
+            <label class="m3-checkbox">
+              <input type="checkbox" id="chk-limit-max">
+              <span>محدود کردن حداکثر تعداد خروجی:</span>
+            </label>
+            <input type="number" id="input-max-configs" class="m3-input small-num ltr-input" min="1" max="50000" value="500" aria-label="حداکثر تعداد کانفیگ">
+          </div>
+        </div>
+
+        <hr class="m3-divider">
+
+        <div class="proto-header">
+          <span class="field-label">پروتکل‌های مجاز (<span id="proto-active-count">26</span> از ۲۶)</span>
+          <div class="proto-bulk-actions">
+            <button type="button" id="btn-proto-all" class="text-btn">انتخاب همه</button>
+            <button type="button" id="btn-proto-none" class="text-btn">لغو همه</button>
+          </div>
+        </div>
+        <div id="protocols-chip-grid" class="chip-grid" role="group" aria-label="فیلتر پروتکل‌ها"></div>
+      </section>
+
+      <!-- RIGHT CARD: 3-LEVEL OUTPUT MATRIX -->
+      <section class="m3-card" aria-labelledby="output-heading">
+        <h2 id="output-heading" class="card-title">۳. تنظیمات و ماتریس ۳ سطحی خروجی</h2>
+
+        <div class="field-row">
+          <div class="field-grow">
+            <label for="input-output-dir" class="field-label">پوشه مقصد برای ذخیره خروجی‌ها</label>
+            <input type="text" id="input-output-dir" class="m3-input ltr-input" placeholder="مسیر ذخیره خودکار">
+          </div>
+          <div class="field-actions">
+            <button type="button" id="btn-pick-output-dir" class="btn btn-outlined">تغییر پوشه...</button>
+          </div>
+        </div>
+
+        <fieldset class="matrix-group">
+          <legend class="matrix-legend">سطح ۱: ساختار پوشه‌بندی</legend>
+          <label class="m3-checkbox">
+            <input type="checkbox" id="chk-scope-mix" checked>
+            <span>پوشه میکس کل منابع (Mix_All — ترکیب همه فایل‌ها و لینک‌ها در یکجا)</span>
+          </label>
+          <label class="m3-checkbox">
+            <input type="checkbox" id="chk-scope-persrc">
+            <span>پوشه مجزا برای هر فایل یا منبع (Per_Source)</span>
+          </label>
+        </fieldset>
+
+        <fieldset class="matrix-group">
+          <legend class="matrix-legend">سطح ۲: فرمت‌های خروجی داخل هر پوشه</legend>
+          <div class="matrix-two-col">
+            <label class="m3-checkbox">
+              <input type="checkbox" id="chk-fmt-xray" checked>
+              <span>Xray لینک مستقیم (.txt)</span>
+            </label>
+            <label class="m3-checkbox">
+              <input type="checkbox" id="chk-fmt-xray-b64">
+              <span>Xray Base64 (.txt)</span>
+            </label>
+            <label class="m3-checkbox">
+              <input type="checkbox" id="chk-fmt-singbox" checked>
+              <span>Sing-box هسته آماده (.json)</span>
+            </label>
+            <label class="m3-checkbox">
+              <input type="checkbox" id="chk-fmt-mihomo" checked>
+              <span>Mihomo / Clash Meta (.yaml)</span>
+            </label>
+            <label class="m3-checkbox">
+              <input type="checkbox" id="chk-fmt-companions" checked>
+              <span>فایل‌های کمکی (SSH / DNS / OpenVPN)</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="matrix-group">
+          <legend class="matrix-legend">سطح ۳: تفکیک بر اساس پروتکل</legend>
+          <label class="m3-checkbox">
+            <input type="checkbox" id="chk-split-all" checked>
+            <span>ساخت فایل یکپارچه شامل همه پروتکل‌ها (all_*)</span>
+          </label>
+          <label class="m3-checkbox">
+            <input type="checkbox" id="chk-split-byproto">
+            <span>ساخت فایل جداگانه برای هر پروتکل (پوشه By_Protocol)</span>
+          </label>
+        </fieldset>
+      </section>
+    </div>
+
+    <!-- RUN BUTTON & LIVE PROGRESS -->
+    <section class="run-bar" aria-label="اجرای عملیات">
+      <button type="button" id="btn-run-process" class="btn btn-primary btn-large">
+        شروع پردازش و رمزگشایی
+      </button>
+
+      <div id="progress-box" class="progress-box" hidden aria-live="polite">
+        <div class="progress-meta">
+          <span id="progress-item-label">در حال آماده‌سازی...</span>
+          <strong id="progress-percent-label" class="ltr-inline">0%</strong>
+        </div>
+        <progress id="progress-bar" max="100" value="0" class="m3-progress"></progress>
+      </div>
+    </section>
+
+    <!-- ERROR / ALERT BANNER -->
+    <div id="global-alert" class="alert-banner" hidden role="alert"></div>
+
+    <!-- SECTION 3: RESULTS & PREVIEWS -->
+    <section id="results-section" class="m3-card" hidden aria-labelledby="results-heading">
+      <div class="card-header-row">
+        <div>
+          <h2 id="results-heading" class="card-title">نتایج پردازش و پیش‌نمایش خروجی‌ها</h2>
+          <p id="results-subtitle" class="card-desc"></p>
+        </div>
+        <div class="field-actions">
+          <button type="button" id="btn-open-output" class="btn btn-tonal">باز کردن پوشه خروجی</button>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <span class="kpi-label">کل کانفیگ‌های استخراجی</span>
+          <strong id="kpi-total" class="kpi-value">0</strong>
+        </div>
+        <div class="kpi-card kpi-success">
+          <span class="kpi-label">کانفیگ‌های سالم نهایی</span>
+          <strong id="kpi-valid" class="kpi-value">0</strong>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">تکراری حذف‌شده</span>
+          <strong id="kpi-dups" class="kpi-value">0</strong>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">خراب / فیلترشده</span>
+          <strong id="kpi-rejected" class="kpi-value">0</strong>
+        </div>
+        <div class="kpi-card kpi-warn">
+          <span class="kpi-label">منقضی‌شده</span>
+          <strong id="kpi-expired" class="kpi-value">0</strong>
+        </div>
+      </div>
+
+      <div id="proto-stats-strip" class="proto-stats-strip"></div>
+
+      <!-- LOCKED / FAILED FILES NOTIFICATION -->
+      <div id="locked-alert-bar" class="info-banner warn-banner" hidden>
+        <div>
+          <strong id="locked-summary-text"></strong>
+        </div>
+        <button type="button" id="btn-open-locked-modal" class="btn btn-tonal">وارد کردن رمز و تلاش مجدد</button>
+      </div>
+
+      <div id="failed-list-box" class="failed-box" hidden>
+        <p class="field-label">موارد ناموفق یا فاقد کانفیگ:</p>
+        <ul id="failed-list" class="failed-list"></ul>
+      </div>
+
+      <!-- PREVIEW TABS -->
+      <div class="preview-header-row">
+        <div class="tablist" role="tablist" aria-label="پیش‌نمایش خروجی‌ها" data-tab-group="preview">
+          <button type="button" role="tab" id="ptab-xray" aria-selected="true" aria-controls="ppanel-xray" tabindex="0">Xray (لینک)</button>
+          <button type="button" role="tab" id="ptab-b64" aria-selected="false" aria-controls="ppanel-b64" tabindex="-1">Xray Base64</button>
+          <button type="button" role="tab" id="ptab-sb" aria-selected="false" aria-controls="ppanel-sb" tabindex="-1">Sing-box JSON</button>
+          <button type="button" role="tab" id="ptab-mh" aria-selected="false" aria-controls="ppanel-mh" tabindex="-1">Mihomo YAML</button>
+          <button type="button" role="tab" id="ptab-comp" aria-selected="false" aria-controls="ppanel-comp" tabindex="-1">کمکی‌ها</button>
+          <button type="button" role="tab" id="ptab-files" aria-selected="false" aria-controls="ppanel-files" tabindex="-1">فایل‌های ساخته‌شده</button>
+        </div>
+        <button type="button" id="btn-copy-preview" class="btn btn-outlined">کپی محتوای این تب</button>
+      </div>
+
+      <div role="tabpanel" id="ppanel-xray" aria-labelledby="ptab-xray" class="preview-panel">
+        <pre id="pre-xray" class="code-preview"></pre>
+      </div>
+      <div role="tabpanel" id="ppanel-b64" aria-labelledby="ptab-b64" class="preview-panel" hidden>
+        <pre id="pre-b64" class="code-preview"></pre>
+      </div>
+      <div role="tabpanel" id="ppanel-sb" aria-labelledby="ptab-sb" class="preview-panel" hidden>
+        <pre id="pre-sb" class="code-preview"></pre>
+      </div>
+      <div role="tabpanel" id="ppanel-mh" aria-labelledby="ptab-mh" class="preview-panel" hidden>
+        <pre id="pre-mh" class="code-preview"></pre>
+      </div>
+      <div role="tabpanel" id="ppanel-comp" aria-labelledby="ptab-comp" class="preview-panel" hidden>
+        <pre id="pre-comp" class="code-preview"></pre>
+      </div>
+      <div role="tabpanel" id="ppanel-files" aria-labelledby="ptab-files" class="preview-panel" hidden>
+        <ul id="written-files-list" class="written-files-list"></ul>
+      </div>
+    </section>
+  </main>
+
+  <!-- NATIVE DIALOG 1: PASSWORD VAULT MANAGER -->
+  <dialog id="dialog-vault" class="m3-dialog" closedby="any" aria-labelledby="vault-dialog-title">
+    <div class="dialog-header">
+      <h2 id="vault-dialog-title" class="dialog-title">مخزن رمزهای ذخیره‌شده</h2>
+      <form method="dialog">
+        <button type="submit" class="icon-close-btn" aria-label="بستن پنجره">✕</button>
+      </form>
+    </div>
+    <p class="dialog-desc">
+      این رمزها به‌صورت محلی روی سیستم شما ذخیره می‌شوند و هنگام رمزگشایی فایل‌های قفل (.npvs و غیره) به‌صورت خودکار یکی‌یکی تست می‌شوند.
+    </p>
+    <div class="field-row">
+      <div class="field-grow">
+        <label for="input-new-vault-pass" class="field-label">افزودن رمز جدید (یا چندین رمز در خطوط جداگانه)</label>
+        <textarea id="input-new-vault-pass" class="m3-textarea ltr-input" rows="3" placeholder="@ChannelName&#10;MySecretPass"></textarea>
+      </div>
+    </div>
+    <div class="action-row">
+      <button type="button" id="btn-add-vault-pass" class="btn btn-primary">افزودن به مخزن</button>
+    </div>
+    <ul id="vault-list" class="vault-list"></ul>
+    <div class="dialog-footer">
+      <form method="dialog">
+        <button type="submit" class="btn btn-tonal">بستن</button>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- NATIVE DIALOG 2: LOCKED FILES RETRY -->
+  <dialog id="dialog-locked" class="m3-dialog" closedby="any" aria-labelledby="locked-dialog-title">
+    <div class="dialog-header">
+      <h2 id="locked-dialog-title" class="dialog-title">فایل‌های نیازمند رمز عبور</h2>
+      <form method="dialog">
+        <button type="submit" class="icon-close-btn" aria-label="بستن پنجره">✕</button>
+      </form>
+    </div>
+    <p class="dialog-desc">
+      فایل‌های زیر رمزگشایی نشدند زیرا رمز آن‌ها در مخزن شما نبود. رمز مورد نظر را وارد کنید تا تست شود و به نتایج اضافه گردد:
+    </p>
+    <ul id="locked-files-modal-list" class="locked-modal-list"></ul>
+    <div class="field-group">
+      <label for="input-retry-password" class="field-label">رمز عبور</label>
+      <input type="text" id="input-retry-password" class="m3-input ltr-input" placeholder="رمز یا آیدی کانال سازنده فایل را وارد کنید">
+    </div>
+    <label class="m3-checkbox">
+      <input type="checkbox" id="chk-save-retry-pass" checked>
+      <span>ذخیره این رمز در مخزن برای استفاده‌های بعدی</span>
+    </label>
+    <div class="dialog-footer">
+      <form method="dialog">
+        <button type="submit" class="btn btn-text">انصراف</button>
+      </form>
+      <button type="button" id="btn-submit-retry-password" class="btn btn-primary">تست و رمزگشایی مجدد</button>
+    </div>
+  </dialog>
+
+  <!-- NATIVE DIALOG 3: CONFIRMATION -->
+  <dialog id="dialog-confirm" class="m3-dialog" closedby="any" aria-labelledby="confirm-dialog-title">
+    <div class="dialog-header">
+      <h2 id="confirm-dialog-title" class="dialog-title">تأیید عملیات</h2>
+      <form method="dialog">
+        <button type="submit" class="icon-close-btn" aria-label="بستن">✕</button>
+      </form>
+    </div>
+    <p id="confirm-dialog-message" class="dialog-desc"></p>
+    <div class="dialog-footer">
+      <form method="dialog">
+        <button type="submit" value="cancel" class="btn btn-text">لغو</button>
+        <button type="submit" value="confirm" class="btn btn-primary">بله، انجام شود</button>
+      </form>
+    </div>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,556 @@
+unified-delay: true
+tcp-concurrent: true
+find-process-mode: strict
+profile:
+  store-selected: true
+  store-fake-ip: true
+port: 7892
+socks-port: 7891
+mixed-port: 7890
+allow-lan: true
+mode: rule
+log-level: warning
+external-controller: "0.0.0.0:9090"
+secret: ""
+ipv6: true
+dns:
+  enable: true
+  listen: 0.0.0.0:53
+  ipv6: false
+  prefer-h3: false
+  cache-algorithm: arc
+  use-hosts: true
+  use-system-hosts: true
+  respect-rules: false
+
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter-mode: blacklist
+
+  fake-ip-filter:
+    - "geosite:private"
+    - "+.lan"
+    - "+.localdomain"
+    - "+.invalid"
+    - "+.localhost"
+    - "+.test"
+    - "+.local"
+    - "+.home.arpa"
+    - "+.arpa"
+    - "+.ir"
+
+    - "time.*.com"
+    - "time.*.gov"
+    - "time.*.apple.com"
+    - "ntp.*.com"
+    - "+.pool.ntp.org"
+    - "+.ntp.org"
+    - "time.asis.io"
+    - "time.windows.com"
+    - "time.apple.com"
+
+    - "connectivitycheck.gstatic.com"
+    - "connectivitycheck.android.com"
+    - "clients3.google.com"
+    - "captive.apple.com"
+    - "+.msftconnecttest.com"
+    - "+.msftncsi.com"
+
+    - "router.asus.com"
+    - "tplinkwifi.net"
+    - "tplinkrepeater.net"
+    - "tplinkap.net"
+    - "routerlogin.net"
+    - "routerlogin.com"
+    - "melogin.cn"
+    - "falogin.cn"
+    - "tendawifi.com"
+    - "leike.cc"
+    - "miwifi.com"
+    - "goforward.link"
+    - "+.plex.direct"
+
+  nameserver-policy:
+    "geosite:private": system
+    "+.arpa": system
+    "+.lan": system
+    "+.local": system
+    "+.home.arpa": system
+
+    "router.asus.com": system
+    "tplinkwifi.net": system
+    "tplinkrepeater.net": system
+    "tplinkap.net": system
+    "routerlogin.net": system
+    "routerlogin.com": system
+    "melogin.cn": system
+    "falogin.cn": system
+    "tendawifi.com": system
+    "leike.cc": system
+    "miwifi.com": system
+    "goforward.link": system
+
+  default-nameserver:
+    - tcp://1.1.1.1
+    - tcp://8.8.8.8
+    - 1.1.1.1
+    - 8.8.8.8
+    - 9.9.9.9
+    - tcp://1.0.0.1
+    - tcp://8.8.4.4
+    - tcp://9.9.9.9
+    - tcp://149.112.112.112
+    - tcp://208.67.222.222
+    - tcp://208.67.220.220
+
+  nameserver:
+    - "https://freedns.controld.com/p2#نوع انتخاب پروکسی 🔀"
+
+  fallback:
+    - "https://dns.adguard-dns.com/dns-query#نوع انتخاب پروکسی 🔀"
+
+  fallback-lazy-query: true
+
+  fallback-filter:
+    geoip: false
+    ipcidr:
+      - 10.10.34.34/32
+      - 10.10.34.35/32
+      - 10.10.34.36/32
+      - 127.0.0.1/32
+      - 240.0.0.0/4
+
+  proxy-server-nameserver:
+    - tcp://1.1.1.1
+    - tcp://8.8.8.8
+    - tcp://9.9.9.9
+    - 1.1.1.1
+    - 8.8.8.8
+    - 9.9.9.9
+    - tcp://1.0.0.1
+    - tcp://8.8.4.4
+    - tcp://149.112.112.112
+    - tcp://208.67.222.222
+    - tcp://208.67.220.220
+
+
+  direct-nameserver:
+    - 78.157.42.100
+    - 78.157.42.101
+    - tcp://78.157.42.100
+    - tcp://78.157.42.101
+
+  direct-nameserver-follow-policy: true
+
+sniffer:
+  enable: true
+  force-dns-mapping: false
+  parse-pure-ip: false
+  override-destination: true
+
+  sniff:
+    HTTP:
+      ports:
+        - 80
+        - 8080-8880
+      override-destination: true
+
+    TLS:
+      ports:
+        - 443
+        - 8443
+
+    QUIC:
+      ports:
+        - 443
+        - 8443
+
+tun:
+  enable: true
+  stack: mips
+
+  dns-mode: hijack
+
+  dns-hijack:
+    - any:53
+    - tcp://any:53
+
+  auto-route: true
+  auto-detect-interface: true
+  strict-route: true
+
+  route-exclude-address:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 127.0.0.0/8
+    - 169.254.0.0/16
+    - "::1/128"
+    - "fc00::/7"
+    - "fe80::/10"
+
+rule-providers:
+  DownloadManagers:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/refs/heads/main/DownloadManagers.yaml"
+    interval: 86400
+    path: "./ruleset/DownloadManagers.yaml"
+  Download:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/Download.yaml"
+    interval: 86400
+    path: "./ruleset/Download.yaml"
+  stremio:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/refs/heads/main/stremio.yaml"
+    interval: 86400
+    path: "./ruleset/stremio.yaml"
+  BanProgramAD:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/BanProgramAD.yaml"
+    interval: 86400
+    path: "./ruleset/BanProgramAD.yaml"
+  BanAD:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/BanAD.yaml"
+    interval: 86400
+    path: "./ruleset/BanAD.yaml"
+  PrivateTracker:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/PrivateTracker.yaml"
+    interval: 86400
+    path: "./ruleset/PrivateTracker.yaml"
+  category_public_tracker:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/generated/category-public-tracker.yaml"
+    interval: 86400
+    path: "./ruleset/category_public_tracker.yaml"
+  malware:
+    type: http
+    format: yaml
+    behavior: domain
+    url: "https://raw.githubusercontent.com/Chocolate4U/Iran-clash-rules/release/malware.yaml"
+    interval: 86400
+    path: "./ruleset/malware.yaml"
+  phishing:
+    type: http
+    format: yaml
+    behavior: domain
+    url: "https://raw.githubusercontent.com/Chocolate4U/Iran-clash-rules/release/phishing.yaml"
+    interval: 86400
+    path: "./ruleset/phishing.yaml"
+  cryptominers:
+    type: http
+    format: yaml
+    behavior: domain
+    url: "https://raw.githubusercontent.com/Chocolate4U/Iran-clash-rules/release/cryptominers.yaml"
+    interval: 86400
+    path: "./ruleset/cryptominers.yaml"
+  warninglist:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/warning-list.yaml"
+    interval: 86400
+    path: "./ruleset/warninglist.yaml"
+  Ponzi:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/Ponzi.yaml"
+    interval: 86400
+    path: "./ruleset/Ponzi.yaml"
+  LiteAds:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/refs/heads/main/LiteAds.yaml"
+    interval: 86400
+    path: "./ruleset/LiteAds.yaml"
+  iran_ads:
+    type: http
+    behavior: domain
+    url: "https://github.com/bootmortis/iran-hosted-domains/releases/latest/download/clash_rules_ads.yaml"
+    interval: 86400
+    path: "./ruleset/iran_ads.yaml"
+  PersianBlocker:
+    type: http
+    behavior: domain
+    url: "https://github.com/MasterKia/iran-hosted-domains/releases/latest/download/clash_rules_ads.yaml"
+    interval: 86400
+    path: "./ruleset/PersianBlocker.yaml"
+  ads:
+    type: http
+    format: yaml
+    behavior: domain
+    url: "https://raw.githubusercontent.com/Chocolate4U/Iran-clash-rules/release/category-ads-all.yaml"
+    interval: 86400
+    path: "./ruleset/ads.yaml"
+  BanEasyList:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/BanEasyList.yaml"
+    interval: 86400
+    path: "./ruleset/BanEasyList.yaml"
+  twitch:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/generated/twitch.yaml"
+    interval: 86400
+    path: "./ruleset/twitch.yaml"
+  telegram:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/generated/telegram.yaml"
+    interval: 86400
+    path: "./ruleset/telegram.yaml"
+  YouTube:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/YouTube.yaml"
+    interval: 86400
+    path: "./ruleset/YouTube.yaml"
+  youtube:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/generated/youtube.yaml"
+    interval: 86400
+    path: "./ruleset/youtube.yaml"
+  YouTubeMusic:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/YouTubeMusic.yaml"
+    interval: 86400
+    path: "./ruleset/YouTubeMusic.yaml"
+  Chotwitter:
+    type: http
+    format: yaml
+    behavior: ipcidr
+    url: "https://raw.githubusercontent.com/Chocolate4U/Iran-clash-rules/release/twitter.yaml"
+    interval: 86400
+    path: "./ruleset/Chotwitter.yaml"
+  mihTwitter:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/Twitter.yaml"
+    interval: 86400
+    path: "./ruleset/mihTwitter.yaml"
+  Domtwitter:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/refs/heads/generated/twitter.yaml"
+    interval: 86400
+    path: "./ruleset/Domtwitter.yaml"
+  DomainSpotify:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/refs/heads/generated/spotify.yaml"
+    interval: 86400
+    path: "./ruleset/DomainSpotify.yaml"
+  mihspotify:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/Spotify.yaml"
+    interval: 86400
+    path: "./ruleset/mihSpotify.yaml"
+  instagram:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/refs/heads/generated/instagram.yaml"
+    interval: 86400
+    path: "./ruleset/instagram.yaml"
+  Ai:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/refs/heads/main/Ai.yaml"
+    interval: 86400
+    path: "./ruleset/Ai.yaml"
+  category-ai:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/refs/heads/generated/category-ai-!cn.yaml"
+    interval: 86400
+    path: "./ruleset/category-ai.yaml"
+  censor:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/main/censor.yaml"
+    interval: 86400
+    path: "./ruleset/censor.yaml"
+  apps:
+    type: http
+    format: yaml
+    behavior: classical
+    url: "https://github.com/chocolate4u/Iran-clash-rules/releases/latest/download/apps.yaml"
+    interval: 86400
+    path: "./ruleset/apps.yaml"
+  iran:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/main/iran.yaml"
+    interval: 86400
+    path: "./ruleset/iran.yaml"
+  arvancloud:
+    type: http
+    format: yaml
+    behavior: ipcidr
+    url: "https://raw.githubusercontent.com/Chocolate4U/Iran-clash-rules/release/arvancloud.yaml"
+    interval: 86400
+    path: "./ruleset/arvancloud.yaml"
+  derakcloud:
+    type: http
+    format: yaml
+    behavior: ipcidr
+    url: "https://raw.githubusercontent.com/Chocolate4U/Iran-clash-rules/release/derakcloud.yaml"
+    interval: 86400
+    path: "./ruleset/derakcloud.yaml"
+  iranserver:
+    type: http
+    format: yaml
+    behavior: ipcidr
+    url: "https://raw.githubusercontent.com/Chocolate4U/Iran-clash-rules/release/iranserver.yaml"
+    interval: 86400
+    path: "./ruleset/iranserver.yaml"
+  parspack:
+    type: http
+    format: yaml
+    behavior: ipcidr
+    url: "https://raw.githubusercontent.com/Chocolate4U/Iran-clash-rules/release/parspack.yaml"
+    interval: 86400
+    path: "./ruleset/parspack.yaml"
+  irasn:
+    type: http
+    format: yaml
+    behavior: classical
+    url: "https://raw.githubusercontent.com/Chocolate4U/Iran-clash-rules/release/irasn.yaml"
+    interval: 86400
+    path: "./ruleset/irasn.yaml"
+  ircidr:
+    type: http
+    format: yaml
+    behavior: ipcidr
+    url: "https://github.com/chocolate4u/Iran-clash-rules/releases/latest/download/ircidr.yaml"
+    interval: 86400
+    path: "./ruleset/ircidr.yaml"
+  ir:
+    type: http
+    format: yaml
+    behavior: domain
+    url: "https://github.com/chocolate4u/Iran-clash-rules/releases/latest/download/ir.yaml"
+    interval: 86400
+    path: "./ruleset/ir.yaml"
+  category_ir:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/generated/category-ir.yaml"
+    interval: 86400
+    path: "./ruleset/category_ir.yaml"
+  whatsapp:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/generated/whatsapp.yaml"
+    interval: 86400
+    path: "./ruleset/whatsapp.yaml"
+  steam:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/main/steam.yaml"
+    interval: 86400
+    path: "./ruleset/steam.yaml"
+  SteamRegionCheck:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/SteamRegionCheck.yaml"
+    interval: 86400
+    path: "./ruleset/SteamRegionCheck.yaml"
+  game:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/refs/heads/main/game.yaml"
+    interval: 86400
+    path: "./ruleset/game.yaml"
+  GameDownload:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/GameDownload.yaml"
+    interval: 86400
+    path: "./ruleset/GameDownload.yaml"
+  category-games:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/refs/heads/generated/category-games.yaml"
+    interval: 86400
+    path: "./ruleset/category-games.yaml"
+  Xbox:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/mihomo_rule/refs/heads/main/list/Xbox.yaml"
+    interval: 86400
+    path: "./ruleset/Xbox.yaml"
+  discord:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/refs/heads/main/discord.yaml"
+    interval: 86400
+    path: "./ruleset/discord.yaml"
+  xiaomi_white_list:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/refs/heads/main/xiaomi_white_list.yaml"
+    interval: 86400
+    path: "./ruleset/xiaomi_white_list.yaml"
+  xiaomi_block_list:
+    type: http
+    format: yaml
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/refs/heads/main/xiaomi_block_list.yaml"
+    interval: 86400
+    path: "./ruleset/xiaomi_block_list.yaml"
+  windows:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/10ium/clash_rules/refs/heads/main/windows.yaml"
+    interval: 86400
+    path: "./ruleset/windows.yaml"
+  cloudflare:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/refs/heads/generated/cloudflare.yaml"
+    interval: 86400
+    path: "./ruleset/cloudflare.yaml"
+  github:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/refs/heads/generated/github.yaml"
+    interval: 86400
+    path: "./ruleset/xgithub.yaml"
+  google-play:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/refs/heads/generated/google-play.yaml"
+    interval: 86400
+    path: "./ruleset/google-play.yaml"
+  google:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/refs/heads/generated/google.yaml"
+    interval: 86400
+    path: "./ruleset/google.yaml"
+  local_ips:
+    type: http
+    behavior: ipcidr
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/generated/local-ips.yaml"
+    interval: 86400
+    path: "./ruleset/local_ips.yaml"
+  private:
+    type: http
+    behavior: domain
+    url: "https://raw.githubusercontent.com/10ium/V2rayDomains2Clash/generated/private.yaml"
+    interval: 86400
+    path: "./ruleset/private.yaml"
+
+proxies:

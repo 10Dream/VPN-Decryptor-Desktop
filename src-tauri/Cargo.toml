@@ -1,0 +1,21 @@
+[package]
+name = "vpn-decryptor-desktop"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "vpn_decryptor_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+decryptor-core = { path = "../crates/decryptor-core" }
+directories = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tokio = { version = "1", features = ["sync", "time"] }

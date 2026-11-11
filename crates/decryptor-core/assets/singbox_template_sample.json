@@ -1,0 +1,278 @@
+{
+  "log": {
+    "disabled": false,
+    "level": "warn",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "dns-remote",
+        "type": "https",
+        "server": "1.1.1.1",
+        "detour": "انتخاب دستی 🤏🏻"
+      },
+      {
+        "tag": "dns-direct",
+        "type": "https",
+        "server": "178.22.122.100",
+        "detour": "direct"
+      },
+      {
+        "tag": "dns-local",
+        "type": "local",
+        "detour": "direct"
+      }
+    ],
+    "rules": [
+      {
+        "rule_set": [
+          "geosite-category-ads-all",
+          "geosite-malware",
+          "geosite-phishing",
+          "geosite-cryptominers"
+        ],
+        "action": "predefined",
+        "rcode": "REFUSED"
+      },
+      {
+        "domain_suffix": [
+          ".ir"
+        ],
+        "rule_set": [
+          "geosite-ir",
+          "geosite-arvancloud",
+          "geosite-derakcloud",
+          "geosite-iranserver",
+          "geosite-parspack"
+        ],
+        "server": "dns-direct"
+      }
+    ],
+    "final": "dns-remote",
+    "strategy": "prefer_ipv4"
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 2080
+    },
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "tun0",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "mixed"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "انتخاب دستی 🤏🏻",
+      "outbounds": [
+        "خودکار (بهترین پینگ) 🤖",
+        "__PROXY_SLOT__",
+        "direct"
+      ]
+    },
+    {
+      "type": "urltest",
+      "tag": "خودکار (بهترین پینگ) 🤖",
+      "outbounds": [
+        "__PROXY_SLOT__"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "3m",
+      "tolerance": 50
+    },
+    {
+      "type": "selector",
+      "tag": "تلگرام 💬",
+      "outbounds": [
+        "انتخاب دستی 🤏🏻",
+        "خودکار (بهترین پینگ) 🤖",
+        "__PROXY_SLOT__"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "یوتیوب ▶️",
+      "outbounds": [
+        "انتخاب دستی 🤏🏻",
+        "خودکار (بهترین پینگ) 🤖",
+        "__PROXY_SLOT__"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "گوگل 🌍",
+      "outbounds": [
+        "انتخاب دستی 🤏🏻",
+        "خودکار (بهترین پینگ) 🤖",
+        "__PROXY_SLOT__"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "هوش مصنوعی 🤖",
+      "outbounds": [
+        "انتخاب دستی 🤏🏻",
+        "خودکار (بهترین پینگ) 🤖",
+        "__PROXY_SLOT__"
+      ]
+    },
+    {
+      "type": "vless",
+      "tag": "__PROXY_SLOT__",
+      "server": "1.2.3.4",
+      "server_port": 443,
+      "uuid": "11111111-2222-3333-4444-555555555555",
+      "packet_encoding": "xudp"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rule_set": [
+      {
+        "tag": "geosite-ir",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/main/rule-set/geosite-ir.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geoip-ir",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/main/rule-set/geoip-ir.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geosite-category-ads-all",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/main/rule-set/geosite-category-ads-all.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geosite-malware",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/main/rule-set/geosite-malware.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geosite-phishing",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/main/rule-set/geosite-phishing.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geosite-cryptominers",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/main/rule-set/geosite-cryptominers.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geosite-arvancloud",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/main/rule-set/geosite-arvancloud.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geosite-derakcloud",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/main/rule-set/geosite-derakcloud.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geosite-iranserver",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/main/rule-set/geosite-iranserver.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geosite-parspack",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/main/rule-set/geosite-parspack.srs",
+        "download_detour": "direct"
+      }
+    ],
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "rule_set": [
+          "geosite-category-ads-all",
+          "geosite-malware",
+          "geosite-phishing",
+          "geosite-cryptominers"
+        ],
+        "outbound": "block"
+      },
+      {
+        "domain_suffix": [
+          ".ir"
+        ],
+        "rule_set": [
+          "geosite-ir",
+          "geoip-ir",
+          "geosite-arvancloud",
+          "geosite-derakcloud",
+          "geosite-iranserver",
+          "geosite-parspack"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      }
+    ],
+    "final": "انتخاب دستی 🤏🏻",
+    "auto_detect_interface": true,
+    "default_domain_resolver": "dns-remote"
+  },
+  "ntp": {
+    "enabled": true,
+    "server": "time.cloudflare.com",
+    "server_port": 123,
+    "domain_resolver": "dns-direct",
+    "interval": "30m"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "store_fakeip": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui",
+      "default_mode": "Rule"
+    }
+  }
+}
