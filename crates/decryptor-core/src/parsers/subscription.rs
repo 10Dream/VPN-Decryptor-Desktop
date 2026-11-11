@@ -1275,7 +1275,7 @@ pub async fn parse_subscription_text(
 
     // Extract single subscription URL to fetch if content is not already full structured config
     static URL_RE: OnceLock<Regex> = OnceLock::new();
-    let url_re = URL_RE.get_or_init(|| Regex::new(r"(?i)https?://[^\s\r\n\t<>\"']+").unwrap());
+    let url_re = URL_RE.get_or_init(|| Regex::new(r#"(?i)https?://[^\s\r\n\t<>"']+"#).unwrap());
     if !is_structured {
         let urls: Vec<String> = url_re.find_iter(&content).map(|m| m.as_str().to_string()).collect();
         if !urls.is_empty() {
