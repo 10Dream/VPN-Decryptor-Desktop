@@ -11,6 +11,8 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    env:
+      CARGO_TERM_COLOR: never
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,15 +29,26 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Workspace Unit Tests
-        run: cargo test --workspace --locked || cargo test --workspace
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          cargo test --workspace 2>&1 | Tee-Object -FilePath ci_build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build CLI Release Binary
-        run: cargo build --release -p decryptor-cli
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          cargo build --release -p decryptor-cli 2>&1 | Tee-Object -Append -FilePath ci_build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Tauri Desktop App (NSIS + Portable EXE)
+        shell: pwsh
         run: |
-          npm install --no-save @tauri-apps/cli@^2
-          npx tauri build --bundles nsis
+          $ErrorActionPreference = 'Continue'
+          npm install --no-save @tauri-apps/cli@^2 2>&1 | Tee-Object -Append -FilePath ci_build.log
+          npx tauri build --bundles nsis 2>&1 | Tee-Object -Append -FilePath ci_build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Stage Release Assets
         shell: pwsh
@@ -64,3 +77,21 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.exe
+
+      - name: Post Failure Log Comment
+        if: failure()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if (Test-Path ci_build.log) {
+            $tail = (Get-Content ci_build.log -Tail 150) -join "`n"
+            $bodyText = "### GitHub Actions Failure Log`n`n``````text`n$tail`n``````"
+            if ($bodyText.Length -gt 60000) { $bodyText = $bodyText.Substring($bodyText.Length - 60000) }
+            $payload = @{ body = $bodyText } | ConvertTo-Json
+            Invoke-RestMethod -Method Post `
+              -Uri "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/comments" `
+              -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" } `
+              -ContentType "application/json; charset=utf-8" `
+              -Body ([System.Text.Encoding]::UTF8.GetBytes($payload))
+          }
