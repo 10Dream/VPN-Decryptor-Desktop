@@ -1101,10 +1101,10 @@ pub fn parse_uri_config(uri_in: &str) -> Option<ProxyProfile> {
             if let Some((m, pw)) = ds.split_once(':') {
                 (m.to_string(), pw.to_string())
             } else {
-                ("aes-128-gcm".to_string(), auth)
+                ("aes-128-gcm".to_string(), auth.clone())
             }
         } else {
-            ("aes-128-gcm".to_string(), auth)
+            ("aes-128-gcm".to_string(), auth.clone())
         };
         // SIP002 separate base64 decoding: check if method itself is base64 encoded
         if let Ok(dec_m) = base64_decode_safe(&method_raw) {
@@ -1437,11 +1437,10 @@ pub async fn parse_subscription_text(
                         sni: "consumer-masque.cloudflareclient.com".to_string(),
                         private_key: pk.to_string(),
                         public_key: raw_pub,
-                        ip: ipv4.clone(),
                         local_address: ipv4,
-                        ipv6,
-                        udp: true,
-                        remote_dns_resolve: true,
+                        ipv6: if ipv6.is_empty() { None } else { Some(ipv6) },
+                        udp: Some(true),
+                        remote_dns_resolve: Some(true),
                         dns: vec!["1.1.1.1".to_string(), "1.0.0.1".to_string()],
                         ..Default::default()
                     };
