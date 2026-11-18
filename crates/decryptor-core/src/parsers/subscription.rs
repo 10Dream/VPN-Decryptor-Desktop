@@ -654,7 +654,11 @@ pub fn parse_uri_config(uri_in: &str) -> Option<ProxyProfile> {
             .fragment()
             .map(|f| percent_decode_plus(f, false))
             .unwrap_or_default();
-        let security = q.get("security").cloned().unwrap_or_else(|| "none".to_string());
+        let flow = q.get("flow").cloned().unwrap_or_default();
+        let mut security = q.get("security").cloned().unwrap_or_else(|| "none".to_string());
+        if !flow.is_empty() && security == "none" {
+            security = "tls".to_string();
+        }
         let is_tls = security == "tls" || security == "reality";
         let alpn = q
             .get("alpn")
@@ -1090,7 +1094,7 @@ pub fn parse_uri_config(uri_in: &str) -> Option<ProxyProfile> {
         let (srv_raw, port_s) = host_port.rsplit_once(':')?;
         let server = srv_raw.trim_matches(|c| c == '[' || c == ']').to_string();
         let port = port_s.parse::<u16>().unwrap_or(8388);
-        let (method_raw, password_raw) = if let Some((m, pw)) = auth.split_once(':') {
+        let (mut method_raw, mut password_raw) = if let Some((m, pw)) = auth.split_once(':') {
             (m.to_string(), pw.to_string())
         } else if let Ok(dec) = base64_decode_safe(&auth) {
             let ds = String::from_utf8_lossy(&dec).into_owned();
@@ -1102,6 +1106,26 @@ pub fn parse_uri_config(uri_in: &str) -> Option<ProxyProfile> {
         } else {
             ("aes-128-gcm".to_string(), auth)
         };
+        // SIP002 separate base64 decoding: check if method itself is base64 encoded
+        if let Ok(dec_m) = base64_decode_safe(&method_raw) {
+            let dm = String::from_utf8_lossy(&dec_m).trim().to_string();
+            if !dm.is_empty() && (dm.contains("2022-") || dm.contains("aes-") || dm.contains("chacha20") || dm.contains("rc4")) {
+                method_raw = dm;
+            }
+        }
+        // Check if password itself is base64 encoded string containing raw bytes or text
+        if let Ok(dec_pw) = base64_decode_safe(&password_raw) {
+            let dpw = String::from_utf8_lossy(&dec_pw).trim().to_string();
+            if !dpw.is_empty() {
+                if let Ok(test_buf) = base64_decode_safe(&dpw) {
+                    if test_buf.len() == 16 || test_buf.len() == 32 {
+                        password_raw = dpw;
+                    }
+                } else if auth.contains(':') && !method_raw.contains("2022-") && dpw.is_ascii() && !dpw.contains('\0') {
+                    password_raw = dpw;
+                }
+            }
+        }
         let method = percent_decode_plus(&method_raw, false);
         let password = percent_decode_plus(&password_raw, false);
         return Some(ProxyProfile {
@@ -1370,6 +1394,65 @@ pub async fn parse_subscription_text(
     }
 
     content = content.trim().to_string();
+
+    // Usque / Warpscout MASQUE JSON check
+    if content.starts_with('{')
+        && (content.contains("\"private_key\"")
+            || content.contains("\"endpoint_h2_v4\"")
+            || content.contains("\"endpoint_pub_key\""))
+    {
+        if let Ok(u_json) = serde_json::from_str::<Value>(&content) {
+            let priv_key = u_json.get("private_key").and_then(|v| v.as_str());
+            let ep_h2 = u_json.get("endpoint_h2_v4").and_then(|v| v.as_str());
+            let ep_v4 = u_json.get("endpoint_v4").and_then(|v| v.as_str());
+            let ep_pub = u_json.get("endpoint_pub_key").and_then(|v| v.as_str());
+            if let Some(pk) = priv_key {
+                if ep_h2.is_some() || ep_v4.is_some() || ep_pub.is_some() {
+                    let mut raw_pub = ep_pub.unwrap_or("").to_string();
+                    raw_pub = raw_pub
+                        .replace("-----BEGIN PUBLIC KEY-----", "")
+                        .replace("-----END PUBLIC KEY-----", "")
+                        .replace("-----BEGIN EC PUBLIC KEY-----", "")
+                        .replace("-----END EC PUBLIC KEY-----", "")
+                        .split_whitespace()
+                        .collect();
+                    let srv = ep_h2.or(ep_v4).unwrap_or("162.159.199.71").to_string();
+                    let net = if ep_h2.is_some() { "h2" } else { "h3" };
+                    let ipv4 = u_json
+                        .get("ipv4")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("172.16.0.2")
+                        .to_string();
+                    let ipv6 = u_json
+                        .get("ipv6")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let p = ProxyProfile {
+                        name: "MASQUE H2 WARP".to_string(),
+                        protocol: "masque".to_string(),
+                        server: srv,
+                        server_port: 4443,
+                        network: net.to_string(),
+                        sni: "consumer-masque.cloudflareclient.com".to_string(),
+                        private_key: pk.to_string(),
+                        public_key: raw_pub,
+                        ip: ipv4.clone(),
+                        local_address: ipv4,
+                        ipv6,
+                        udp: true,
+                        remote_dns_resolve: true,
+                        dns: vec!["1.1.1.1".to_string(), "1.0.0.1".to_string()],
+                        ..Default::default()
+                    };
+                    return Ok(SubscriptionParsed {
+                        format_type: "usque".to_string(),
+                        profiles: vec![p],
+                    });
+                }
+            }
+        }
+    }
 
     // JSON-formatted Clash config
     if content.starts_with('{') && (content.contains("\"proxies\"") || content.contains("\"proxy-providers\"")) {

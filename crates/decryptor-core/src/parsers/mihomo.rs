@@ -185,12 +185,27 @@ pub fn clash_object_to_profile(p: &Map<String, Value>) -> ProxyProfile {
         network = "httpupgrade".to_string();
     }
 
+    let first_peer = p
+        .get("peers")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_object());
+
     let server = {
-        let s = s_val(p.get("server"));
+        let mut s = s_val(p.get("server"));
+        if s.is_empty() || s == "127.0.0.1" {
+            if let Some(fp) = first_peer {
+                let fps = s_val(fp.get("server"));
+                if !fps.is_empty() {
+                    s = fps;
+                }
+            }
+        }
         if s.is_empty() { "127.0.0.1".to_string() } else { s }
     };
     let port = p
         .get("port")
+        .or_else(|| first_peer.and_then(|fp| fp.get("port")))
         .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
         .unwrap_or(443) as u16;
     let tls = p.get("tls").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -240,15 +255,26 @@ pub fn clash_object_to_profile(p: &Map<String, Value>) -> ProxyProfile {
         .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default();
 
-    let reserved = p.get("reserved").and_then(|v| v.as_array()).map(|arr| {
-        arr.iter()
-            .filter_map(|x| x.as_i64().map(|n| n as i32))
-            .collect::<Vec<_>>()
-    });
+    let reserved = p
+        .get("reserved")
+        .or_else(|| first_peer.and_then(|fp| fp.get("reserved")))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_i64().map(|n| n as i32))
+                .collect::<Vec<_>>()
+        });
 
-    let amnezia_options = p.get("amnezia-wg-option").and_then(|v| v.as_object()).map(|a| {
+    let amnezia_raw = p
+        .get("amnezia-wg-option")
+        .or_else(|| p.get("amnezia-option"))
+        .or_else(|| p.get("amnezia"))
+        .or_else(|| first_peer.and_then(|fp| fp.get("amnezia-wg-option")))
+        .and_then(|v| v.as_object());
+
+    let amnezia_options = if let Some(a) = amnezia_raw {
         let num = |k: &str| a.get(k).and_then(|x| x.as_i64());
-        AmneziaWgOptions {
+        Some(AmneziaWgOptions {
             jc: num("jc"),
             jmin: num("jmin"),
             jmax: num("jmax"),
@@ -260,9 +286,29 @@ pub fn clash_object_to_profile(p: &Map<String, Value>) -> ProxyProfile {
             h2: a.get("h2").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
             h3: a.get("h3").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
             h4: a.get("h4").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
+            i1: a.get("i1").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
             ..Default::default()
-        }
-    });
+        })
+    } else if p.get("jc").is_some() || p.get("jmin").is_some() || p.get("jmax").is_some() {
+        let num = |k: &str| p.get(k).and_then(|x| x.as_i64());
+        Some(AmneziaWgOptions {
+            jc: num("jc"),
+            jmin: num("jmin"),
+            jmax: num("jmax"),
+            s1: num("s1"),
+            s2: num("s2"),
+            s3: num("s3"),
+            s4: num("s4"),
+            h1: p.get("h1").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
+            h2: p.get("h2").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
+            h3: p.get("h3").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
+            h4: p.get("h4").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
+            i1: p.get("i1").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
+            ..Default::default()
+        })
+    } else {
+        None
+    };
 
     let host_key = p
         .get("host-key")
@@ -315,7 +361,9 @@ pub fn clash_object_to_profile(p: &Map<String, Value>) -> ProxyProfile {
             let pk = reality
                 .and_then(|r| r.get("public-key"))
                 .or_else(|| p.get("public-key"))
-                .or_else(|| p.get("publicKey"));
+                .or_else(|| p.get("publicKey"))
+                .or_else(|| first_peer.and_then(|fp| fp.get("public-key")))
+                .or_else(|| first_peer.and_then(|fp| fp.get("publicKey")));
             s_val(pk)
         },
         short_id: reality
@@ -343,7 +391,9 @@ pub fn clash_object_to_profile(p: &Map<String, Value>) -> ProxyProfile {
         peer_public_key: s_val(
             p.get("peer-public-key")
                 .or_else(|| p.get("public-key"))
-                .or_else(|| p.get("publicKey")),
+                .or_else(|| p.get("publicKey"))
+                .or_else(|| first_peer.and_then(|fp| fp.get("public-key")))
+                .or_else(|| first_peer.and_then(|fp| fp.get("publicKey"))),
         ),
         local_address: s_val(p.get("ip")),
         ipv6: p.get("ipv6").map(|v| s_val(Some(v))).filter(|x| !x.is_empty()),
@@ -433,7 +483,17 @@ pub fn parse_mihomo_yaml(raw_text: &str) -> Result<(Vec<ProxyProfile>, Vec<Strin
                         *arr = Value::Array(Vec::new());
                     }
                     if let Some(a) = arr.as_array_mut() {
-                        a.push(parse_yaml_value(rest));
+                        if rest.contains(':') && !rest.starts_with('{') {
+                            if let Some((sk, sv)) = rest.split_once(':') {
+                                let mut m = Map::new();
+                                m.insert(sk.trim().to_string(), parse_yaml_value(sv.trim()));
+                                a.push(Value::Object(m));
+                            } else {
+                                a.push(parse_yaml_value(rest));
+                            }
+                        } else {
+                            a.push(parse_yaml_value(rest));
+                        }
                     }
                 }
                 continue;
@@ -473,7 +533,11 @@ pub fn parse_mihomo_yaml(raw_text: &str) -> Result<(Vec<ProxyProfile>, Vec<Strin
                     }
                 } else if leading_ws > proxies_indent + 2 && current_sub_key.is_some() {
                     let sub_k = current_sub_key.as_ref().unwrap().clone();
-                    if val.is_empty() {
+                    if let Some(arr) = cp.get_mut(&sub_k).and_then(|v| v.as_array_mut()) {
+                        if let Some(last_obj) = arr.last_mut().and_then(|v| v.as_object_mut()) {
+                            last_obj.insert(key, parse_yaml_value(val));
+                        }
+                    } else if val.is_empty() {
                         current_sub_sub_key = Some(key.clone());
                         let parent = cp.entry(sub_k).or_insert_with(|| Value::Object(Map::new()));
                         if let Some(pm) = parent.as_object_mut() {

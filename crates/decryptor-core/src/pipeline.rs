@@ -1152,8 +1152,8 @@ pub fn decode_bytes_sync_or_async<'a>(
             }
         }
 
-        // 14. YAML / Mihomo (.yaml, .yml)
-        if matches!(ext.as_str(), "yaml" | "yml") {
+        // 14. YAML / Mihomo (.yaml, .yml, .yam)
+        if matches!(ext.as_str(), "yaml" | "yml" | "yam") {
             if let Ok(profiles) =
                 parse_mihomo_yaml_async(trimmed, proxy_mode, custom_proxy_url).await
             {
@@ -2033,6 +2033,12 @@ pub async fn process_batch_cancellable(
                             stage: "writing".to_string(),
                         });
                     }
+                }
+                if cancel_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                if (src_idx + 1) % 15 == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
                 }
                 let (src_valid, _) = filter_by_options(src.profiles.clone(), &options_owned);
                 if src_valid.is_empty() && src.dns_companions.is_empty() {

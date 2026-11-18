@@ -353,6 +353,13 @@ pub fn heal_proxy(p: &mut ProxyProfile) {
             p.flow.clear();
         } else {
             p.flow = "xtls-rprx-vision".to_string();
+            if (!p.tls || p.security.eq_ignore_ascii_case("none"))
+                && !p.reality
+                && !p.security.eq_ignore_ascii_case("reality")
+            {
+                p.tls = true;
+                p.security = "tls".to_string();
+            }
         }
     }
 
