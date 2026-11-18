@@ -2034,10 +2034,7 @@ pub async fn process_batch_cancellable(
                         });
                     }
                 }
-                if cancel_flag.load(Ordering::Relaxed) {
-                    break;
-                }
-                if (src_idx + 1) % 15 == 0 {
+                if (s_idx + 1) % 15 == 0 {
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
                 let (src_valid, _) = filter_by_options(src.profiles.clone(), &options_owned);
